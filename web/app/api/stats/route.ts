@@ -1,8 +1,6 @@
-import { Chess } from "chess.js";
 import { getDb } from "../../../db";
 import { gameCounters, gameResults } from "../../../db/schema";
-
-type RecordedOutcome = "loss" | "win";
+import { replayCheckmateOutcome, type Side } from "../../../lib/game-result";
 
 async function readCounters() {
   const db = await getDb();
@@ -43,7 +41,11 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const payload = (await request.json()) as { gameId?: string; moves?: unknown };
+    const payload = (await request.json()) as {
+      engineColor?: Side;
+      gameId?: string;
+      moves?: unknown;
+    };
 
     if (!payload.gameId || !/^[0-9a-f-]{36}$/i.test(payload.gameId)) {
       return Response.json({ error: "A valid gameId is required." }, { status: 400 });
@@ -55,18 +57,19 @@ export async function POST(request: Request) {
     ) {
       return Response.json({ error: "A valid move list is required." }, { status: 400 });
     }
+    if (payload.engineColor !== "w" && payload.engineColor !== "b") {
+      return Response.json({ error: "A valid engineColor is required." }, { status: 400 });
+    }
 
-    const game = new Chess();
+    let outcome;
     try {
-      for (const move of payload.moves as string[]) game.move(move);
+      outcome = replayCheckmateOutcome(payload.moves as string[], payload.engineColor);
     } catch {
       return Response.json({ error: "The submitted game contains an illegal move." }, { status: 400 });
     }
-    if (!game.isCheckmate()) {
+    if (!outcome) {
       return Response.json({ error: "Only completed checkmates are counted." }, { status: 400 });
     }
-
-    const outcome: RecordedOutcome = game.turn() === "b" ? "loss" : "win";
 
     const db = await getDb();
     await db

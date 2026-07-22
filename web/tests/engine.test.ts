@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Chess } from "chess.js";
+import { replayCheckmateOutcome } from "../lib/game-result";
 import { chooseLosingMove } from "../lib/shallow-red";
 
 test("the browser engine is deterministic, legal, and non-mutating", () => {
@@ -38,4 +39,14 @@ test("the engine finds an immediate selfmate opportunity", () => {
 
   assert.equal(decision.lan, "c3d4");
   assert.ok(decision.immediateMateProbability > 0);
+});
+
+test("finished games are counted from either Shallow Red color", () => {
+  const whiteCheckmates = ["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"];
+  const blackCheckmates = ["f3", "e5", "g4", "Qh4#"];
+
+  assert.equal(replayCheckmateOutcome(whiteCheckmates, "b"), "loss");
+  assert.equal(replayCheckmateOutcome(whiteCheckmates, "w"), "win");
+  assert.equal(replayCheckmateOutcome(blackCheckmates, "w"), "loss");
+  assert.equal(replayCheckmateOutcome(blackCheckmates, "b"), "win");
 });

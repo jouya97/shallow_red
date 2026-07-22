@@ -254,11 +254,46 @@ main {
 }
 
 .status-card,
+.side-picker,
 .rule-card,
 .telemetry,
 .move-log {
   border-top: 1px solid rgba(255, 255, 255, 0.45);
   padding-top: 20px;
+}
+
+.side-picker {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.side-picker p {
+  margin: 0;
+}
+
+.side-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.side-option {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  color: white;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 9px 14px;
+}
+
+.side-option + .side-option {
+  border-left: 0;
+}
+
+.side-option[aria-pressed="true"] {
+  background: white;
+  color: var(--red-dark);
 }
 
 .status-card {

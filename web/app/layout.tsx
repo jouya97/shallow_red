@@ -20,7 +20,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const imageUrl = new URL("/og.png", `${protocol}://${host}`).toString();
   const title = "Shallow Red — You Can't Lose";
   const description =
-    "Play legal chess against Shallow Red, an engine trying to get checkmated.";
+    "Play legal chess against Shallow Red, an engine trying to get checkmated as quickly as possible.";
 
   return {
     title,

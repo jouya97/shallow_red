@@ -27,7 +27,10 @@ test("server-renders the Shallow Red game shell", async () => {
   assert.match(html, /<title>Shallow Red/);
   assert.match(html, /You can(?:&apos;|&#x27;|')t/);
   assert.doesNotMatch(html, /Your challenge is stranger/);
-  assert.match(html, /Play White\. Try to lose\./);
+  assert.match(html, /Try to lose\./);
+  assert.match(html, /Choose your color/);
+  assert.match(html, />Black</);
+  assert.match(html, /as quickly as possible/);
   assert.match(html, />Losses</);
   assert.match(html, />Wins</);
   assert.doesNotMatch(html, /Accidental AI wins|>Draws|Last search|research evaluations|How this scales|server bill|moves computed locally/i);

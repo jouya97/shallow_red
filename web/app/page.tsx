@@ -15,7 +15,8 @@ export default function Home() {
           <p className="kicker">The world&apos;s least ambitious chess engine</p>
           <h1>You can&apos;t lose.</h1>
           <p className="lede">
-            Shallow Red follows every rule of chess and tries to get checkmated.
+            Shallow Red follows every rule of chess and tries to get checkmated
+            as quickly as possible.
           </p>
         </div>
       </section>
