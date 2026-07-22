@@ -35,8 +35,10 @@ test("server-renders the Shallow Red game shell", async () => {
   assert.match(html, /Shallow Red(?:&apos;|&#x27;|')s record/);
   assert.match(html, />Losses</);
   assert.match(html, />Wins</);
+  assert.match(html, />Draws</);
+  assert.match(html, />Total games</);
   assert.doesNotMatch(html, /Shallow Red losses|Shallow Red wins/i);
-  assert.doesNotMatch(html, /Accidental AI wins|>Draws|Last search|research evaluations|How this scales|server bill|moves computed locally/i);
+  assert.doesNotMatch(html, /Accidental AI wins|Last search|research evaluations|How this scales|server bill|moves computed locally/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/);
 });
 
@@ -46,6 +48,7 @@ test("server-renders the technical page and model credit", async () => {
 
   const html = await response.text();
   assert.match(html, /The Technical Stuff/);
+  assert.match(html, /By <strong>Jian Ouyang<\/strong>/);
   assert.match(html, /What does .*losing.* mean/);
   assert.match(html, /281 of 300/);
   assert.match(html, /gpt-5\.6-sol-high/);

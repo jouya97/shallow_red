@@ -16,6 +16,7 @@ export default function TechnicalPage() {
       <section className="technical-hero">
         <p className="kicker">Inside the world&apos;s least ambitious chess engine</p>
         <h1>The Technical Stuff</h1>
+        <p className="technical-byline">By <strong>Jian Ouyang</strong></p>
         <p className="lede">
           Shallow Red began with a simple question: what happens when a chess
           engine values its own checkmate above everything else?

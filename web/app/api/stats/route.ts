@@ -1,6 +1,6 @@
 import { getDb } from "../../../db";
 import { gameCounters, gameResults } from "../../../db/schema";
-import { replayCheckmateOutcome, type Side } from "../../../lib/game-result";
+import { replayGameOutcome, type Side } from "../../../lib/game-result";
 
 async function readCounters() {
   const db = await getDb();
@@ -10,7 +10,12 @@ async function readCounters() {
     throw new Error("The game counter row is unavailable.");
   }
 
-  return { losses: counters.losses, wins: counters.wins };
+  return {
+    losses: counters.losses,
+    wins: counters.wins,
+    draws: counters.draws,
+    totalGames: counters.totalGames,
+  };
 }
 
 function errorResponse(error: unknown) {
@@ -63,18 +68,23 @@ export async function POST(request: Request) {
 
     let outcome;
     try {
-      outcome = replayCheckmateOutcome(payload.moves as string[], payload.engineColor);
+      outcome = replayGameOutcome(payload.moves as string[], payload.engineColor);
     } catch {
       return Response.json({ error: "The submitted game contains an illegal move." }, { status: 400 });
     }
     if (!outcome) {
-      return Response.json({ error: "Only completed checkmates are counted." }, { status: 400 });
+      return Response.json({ error: "Only completed games are counted." }, { status: 400 });
     }
 
     const db = await getDb();
     await db
       .insert(gameResults)
-      .values({ id: payload.gameId, outcome })
+      .values({
+        id: payload.gameId,
+        outcome,
+        engineColor: payload.engineColor,
+        moves: JSON.stringify(payload.moves),
+      })
       .onConflictDoNothing();
 
     return Response.json(await readCounters(), {

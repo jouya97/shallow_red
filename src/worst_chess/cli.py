@@ -46,6 +46,7 @@ from worst_chess.agents.weak import (
     MaterialOpponentAgent,
     NoisyOpponentAgent,
 )
+from worst_chess.agents.web import WebEngineAgent
 from worst_chess.chess.neural_actions import (
     ABSOLUTE_ACTION_ORIENTATION,
     ACTION_ORIENTATION_METADATA_KEY,
@@ -104,9 +105,16 @@ OPPONENT_CHOICES = (
     "random",
     "resistant",
 )
+RANKED_OPPONENT_CHOICES = (
+    *OPPONENT_CHOICES,
+    "selfish-random-reply",
+    "selfish-portfolio",
+)
 SMOKE_OPPONENT_CHOICES = (
     *OPPONENT_CHOICES,
     "selfish-loser",
+    "selfish-random-reply",
+    "selfish-portfolio",
     "selfish-reverse-stockfish",
     "frozen-target-exploit",
 )
@@ -147,6 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
             "two-turn-random-reply",
             "opportunistic",
             "rollout-search",
+            "web",
         ),
         default="heuristic",
     )
@@ -271,13 +280,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ranked.add_argument(
         "--target-policy",
-        choices=("neural", "random-reply"),
+        choices=("neural", "random-reply", "stalemate-aware"),
         default="neural",
     )
     ranked.add_argument("--target-top-k", type=int, default=12)
     ranked.add_argument(
         "--opponent",
-        choices=OPPONENT_CHOICES,
+        choices=RANKED_OPPONENT_CHOICES,
         default="stockfish",
     )
     ranked.add_argument("--trajectories", type=int, default=100)
@@ -381,6 +390,8 @@ def _target_agent(
     rollout_seed: int = 20260721,
     reply_samples: int = 4,
 ) -> Agent:
+    if name == "web":
+        return stack.enter_context(WebEngineAgent())
     if name == "random":
         return RandomAgent()
     if name == "heuristic":
@@ -539,6 +550,49 @@ def _opponent_agent(
     return stack.enter_context(StockfishAgent(stockfish, nodes=nodes))
 
 
+def _selfish_population_opponent(
+    target: Agent,
+    *,
+    candidate_limit: int,
+) -> Agent:
+    """Mix distinct policies that try to lose from the opponent seat."""
+
+    cheap_selfish = SelfishLoserOpponentAgent(
+        StalemateAwareRandomReplySearchAgent(None, top_k=64)
+    )
+    return RegimeSwitchingOpponentAgent(
+        (
+            SelfishLoserOpponentAgent(target),
+            cheap_selfish,
+            FrozenTargetExploitOpponentAgent(
+                target,
+                candidate_limit=candidate_limit,
+            ),
+        ),
+        weights=(2, 2, 1),
+        regime_plies=8,
+        salt="selfish-population-v1",
+    )
+
+
+def _ranked_opponent_agent(
+    name: str,
+    target: Agent,
+    stockfish: str | None,
+    nodes: int,
+    stack: ExitStack,
+) -> Agent:
+    """Build ordinary or trying-to-lose opponents for ranked trajectories."""
+
+    if name == "selfish-random-reply":
+        return SelfishLoserOpponentAgent(
+            StalemateAwareRandomReplySearchAgent(None, top_k=64)
+        )
+    if name == "selfish-portfolio":
+        return _selfish_population_opponent(target, candidate_limit=24)
+    return _opponent_agent(name, stockfish, nodes, stack)
+
+
 def _run_smoke(arguments: argparse.Namespace) -> int:
     opening_fens = (
         generate_random_openings(
@@ -605,6 +659,15 @@ def _run_smoke(arguments: argparse.Namespace) -> int:
                 )
             opponent = FrozenTargetExploitOpponentAgent(
                 frozen_target,
+                candidate_limit=arguments.exploit_candidates,
+            )
+        elif arguments.opponent == "selfish-random-reply":
+            opponent = SelfishLoserOpponentAgent(
+                StalemateAwareRandomReplySearchAgent(None, top_k=64)
+            )
+        elif arguments.opponent == "selfish-portfolio":
+            opponent = _selfish_population_opponent(
+                target,
                 candidate_limit=arguments.exploit_candidates,
             )
         elif arguments.opponent in {
@@ -778,6 +841,10 @@ def _run_generate_ranked(arguments: argparse.Namespace) -> int:
             target = RandomReplySearchAgent(
                 base_target, top_k=arguments.target_top_k
             )
+        elif arguments.target_policy == "stalemate-aware":
+            target = StalemateAwareRandomReplySearchAgent(
+                base_target, top_k=arguments.target_top_k
+            )
         else:
             target = base_target
         if arguments.teacher == "reverse-stockfish":
@@ -790,8 +857,9 @@ def _run_generate_ranked(arguments: argparse.Namespace) -> int:
             scorer = reverse_teacher.score_moves
         else:
             scorer = RandomReplySearchAgent().score_moves
-        opponent = _opponent_agent(
+        opponent = _ranked_opponent_agent(
             arguments.opponent,
+            target,
             arguments.stockfish,
             arguments.opponent_nodes,
             stack,

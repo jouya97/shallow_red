@@ -278,7 +278,8 @@ main {
 .status-card,
 .side-picker,
 .rule-card,
-.move-log {
+.move-log,
+.reward-card {
   border-top: 1px solid rgba(255, 255, 255, 0.45);
   padding-top: 20px;
 }
@@ -359,6 +360,79 @@ main {
   margin-top: 12px;
 }
 
+.reward-card {
+  background: var(--acid);
+  border-top: 0;
+  color: var(--ink);
+  padding: 22px;
+}
+
+.reward-card .eyebrow,
+.reward-card > p {
+  margin: 0;
+}
+
+.reward-card h3 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 34px;
+  font-weight: 400;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  margin: 10px 0 12px;
+}
+
+.reward-card > p:not(.eyebrow) {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.reward-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 18px;
+}
+
+.reward-form label {
+  display: grid;
+  font-size: 11px;
+  font-weight: 800;
+  gap: 6px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.reward-form input,
+.reward-form textarea {
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  color: var(--ink);
+  font: 14px Arial, Helvetica, sans-serif;
+  padding: 10px;
+  text-transform: none;
+}
+
+.reward-form textarea {
+  resize: vertical;
+}
+
+.reward-note,
+.reward-form button {
+  grid-column: 1 / -1;
+}
+
+.reward-form button {
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  color: white;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 12px 16px;
+  text-transform: uppercase;
+}
+
 .move-log-heading span {
   font-family: var(--font-geist-mono), monospace;
   font-size: 10px;
@@ -429,7 +503,7 @@ main {
   padding: 20px 0 16px;
 }
 
-.record-totals div + div {
+.record-totals div:nth-child(even) {
   border-left: 1px solid var(--line);
   padding-left: 24px;
 }
@@ -446,7 +520,7 @@ main {
   color: var(--red);
   display: block;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(52px, 6vw, 86px);
+  font-size: clamp(42px, 5vw, 68px);
   font-weight: 400;
   letter-spacing: -0.05em;
   line-height: 1;
@@ -467,6 +541,15 @@ main {
   line-height: 0.88;
   margin: 0;
   max-width: 1200px;
+}
+
+.technical-byline {
+  color: var(--red);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin: 26px 0 0;
+  text-transform: uppercase;
 }
 
 .technical-article {
@@ -727,6 +810,15 @@ footer {
 
   .moves {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .reward-form {
+    grid-template-columns: 1fr;
+  }
+
+  .reward-note,
+  .reward-form button {
+    grid-column: auto;
   }
 
 }

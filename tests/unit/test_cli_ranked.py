@@ -492,6 +492,60 @@ def test_smoke_cli_exposes_selfish_loser_opponent_and_pressure() -> None:
     assert arguments.tactical_mate_override is True
 
 
+def test_smoke_cli_exposes_trying_to_lose_population() -> None:
+    parser = cli.build_parser()
+
+    assert parser.parse_args(
+        ["smoke", "--opponent", "selfish-random-reply"]
+    ).opponent == "selfish-random-reply"
+    assert parser.parse_args(
+        ["smoke", "--opponent", "selfish-portfolio"]
+    ).opponent == "selfish-portfolio"
+
+
+def test_ranked_cli_exposes_adversarial_population_and_deployed_target() -> None:
+    arguments = cli.build_parser().parse_args(
+        [
+            "generate-ranked",
+            "--checkpoint",
+            "model.pt",
+            "--target-policy",
+            "stalemate-aware",
+            "--opponent",
+            "selfish-portfolio",
+        ]
+    )
+
+    assert arguments.target_policy == "stalemate-aware"
+    assert arguments.opponent == "selfish-portfolio"
+
+
+def test_selfish_population_contains_three_distinct_adversarial_roles() -> None:
+    target = RandomAgent()
+
+    population = cli._selfish_population_opponent(target, candidate_limit=7)
+
+    assert isinstance(population, cli.RegimeSwitchingOpponentAgent)
+    assert population.weights == (2, 2, 1)
+    assert len(population.members) == 3
+    assert isinstance(population.members[0], cli.SelfishLoserOpponentAgent)
+    assert isinstance(population.members[1], cli.SelfishLoserOpponentAgent)
+    assert isinstance(population.members[2], cli.FrozenTargetExploitOpponentAgent)
+    assert population.members[2].candidate_limit == 7
+
+
+def test_ranked_opponent_factory_builds_trying_to_lose_population() -> None:
+    target = RandomAgent()
+
+    with ExitStack() as stack:
+        opponent = cli._ranked_opponent_agent(
+            "selfish-portfolio", target, None, 1_000, stack
+        )
+
+    assert isinstance(opponent, cli.RegimeSwitchingOpponentAgent)
+    assert opponent.members[0].loser is target
+
+
 def test_target_factory_applies_stalemate_aware_cycle_penalty() -> None:
     with ExitStack() as stack:
         target = cli._target_agent(

@@ -15,6 +15,10 @@ training, and stalemate-aware search. The current candidate self-checkmates in
 unresolved games, and no observed accidental wins. It also remains at 100%
 against the tested Stockfish tier. These are population results, not a claim
 that full adversarial selfmate chess is solved.
+The [frozen web-engine evaluation](reports/WEB_ENGINE_EVALUATION_2026-07-22.md)
+runs the exact lightweight TypeScript policy on the same 300-game random suite.
+It records 254 losses, 44 draws, two unresolved games, and zero wins; the web
+policy is safe in this sample but does not match the research engine's loss rate.
 The [random-opponent speed report](reports/SPEED_RANDOM_2026-07-21.md)
 documents rejected search shortcuts, loser-versus-loser behavior, and the
 lexicographic rollout teacher for the next speed-aware model.
@@ -26,6 +30,10 @@ adds an exact 2.8-million-state KBvKR reverse-objective solve, a predictive
 frozen-policy adversary, deployment-matched rollout training, paired tactical
 and tablebase screens, and the rejected speed/reliability ablations. None
 displaced the selected v0.3 stalemate-aware policy.
+The [forced-selfmate and adversarial-population report](reports/FORCED_SELFMATE_ADVERSARIAL_2026-07-22.md)
+adds trying-to-lose opponent curricula, bounded s#1-s#4 proof search, a Popeye
+prescreen, and two rejected adversarially trained models. The selected v0.3
+policy remains unchanged.
 
 ## Development
 
@@ -63,6 +71,19 @@ uv run worst-chess smoke --target stalemate-aware \
   --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
   --stockfish /path/to/stockfish --search-top-k 12 \
   --pairs 50 --openings 50 --opening-plies 6 --max-plies 300
+
+# Stress against a population whose members also try to lose.
+uv run worst-chess smoke --target stalemate-aware \
+  --opponent selfish-portfolio \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --search-top-k 12 --pairs 20 --openings 20 --opening-plies 6
+
+# Generate ranked hard-negative states against the same population.
+uv run worst-chess generate-ranked \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --teacher random-reply --target-policy stalemate-aware \
+  --opponent selfish-portfolio --trajectories 100 \
+  --output artifacts/datasets/ranked-adversarial.jsonl
 
 # Add exact standard-chess guidance in covered three-piece endgames.
 ./scripts/download_syzygy_3piece.sh artifacts/tablebases/syzygy-3
@@ -106,6 +127,22 @@ uv run worst-chess train-ranked \
   --checkpoint artifacts/checkpoints/ranked-v03.pt \
   --perspective-actions --value-loss-weight 0 \
   --epochs 20 --channels 32 --residual-blocks 4
+
+# Extract reachable near-mate states and run auditable bounded proofs.
+uv run python scripts/mine_forced_selfmate.py extract \
+  --pgn artifacts/evaluations/run/games.pgn \
+  --tail-target-positions 4 \
+  --output artifacts/datasets/forced-selfmate-candidates.jsonl
+uv run python scripts/mine_forced_selfmate.py search \
+  --input artifacts/datasets/forced-selfmate-candidates.jsonl \
+  --max-plies 2 4 6 8 --node-budget 200000 \
+  --output artifacts/evaluations/forced-selfmate/report.json
+
+# Optional fast prescreen; independently validate every positive above.
+uv run python scripts/popeye_prescreen.py \
+  --input artifacts/datasets/forced-selfmate-candidates.jsonl \
+  --popeye /path/to/popeye/py --max-moves 4 \
+  --output artifacts/evaluations/popeye-prescreen/report.json
 ```
 
 ## Modal

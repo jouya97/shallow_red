@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Chess, type Square } from "chess.js";
 import { opposite, type Side } from "../lib/game-result";
+import { rewardClaimMailto } from "../lib/reward-claim";
 import { chooseLosingMove } from "../lib/shallow-red";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
@@ -23,7 +24,12 @@ const PIECES = {
 } as const;
 
 type Outcome = "loss" | "win" | "draw";
-type GlobalStats = { losses: number; wins: number };
+type GlobalStats = {
+  losses: number;
+  wins: number;
+  draws: number;
+  totalGames: number;
+};
 
 export function ShallowRedGame() {
   const [game, setGame] = useState(() => new Chess());
@@ -77,6 +83,7 @@ export function ShallowRedGame() {
     .history({ verbose: true })
     .some((move) => move.color === humanColor);
   const status = describeStatus(game, thinking, humanColor, engineColor);
+  const rewardEligible = gameOutcome(game, engineColor) === "win";
 
   function playSquare(square: Square) {
     if (thinking || game.isGameOver() || game.turn() !== humanColor) return;
@@ -155,7 +162,6 @@ export function ShallowRedGame() {
     const outcome = gameOutcome(finishedGame, activeEngineColor);
     if (!outcome || recordedOutcome.current) return;
     recordedOutcome.current = outcome;
-    if (outcome === "draw") return;
 
     const id = gameId.current ?? window.crypto.randomUUID();
     gameId.current = id;
@@ -176,6 +182,19 @@ export function ShallowRedGame() {
       .catch(() => {
         // A later page refresh will retrieve the authoritative total.
       });
+  }
+
+  function sendRewardClaim(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!rewardEligible || !gameId.current) return;
+
+    const form = new FormData(event.currentTarget);
+    window.location.assign(rewardClaimMailto({
+      claimantEmail: String(form.get("email") ?? ""),
+      gameId: gameId.current,
+      name: String(form.get("name") ?? ""),
+      note: String(form.get("note") ?? ""),
+    }));
   }
 
   return (
@@ -244,6 +263,29 @@ export function ShallowRedGame() {
           </div>
         </div>
 
+        {rewardEligible ? (
+          <section className="reward-card" aria-labelledby="reward-heading">
+            <p className="eyebrow">Rare achievement unlocked</p>
+            <h3 id="reward-heading">Claim your reward.</h3>
+            <p>Shallow Red beat you. Fill this out and your email app will open with this game&apos;s ID included.</p>
+            <form className="reward-form" onSubmit={sendRewardClaim}>
+              <label>
+                <span>Your name</span>
+                <input name="name" autoComplete="name" required />
+              </label>
+              <label>
+                <span>Your email</span>
+                <input name="email" type="email" autoComplete="email" required />
+              </label>
+              <label className="reward-note">
+                <span>Message (optional)</span>
+                <textarea name="note" rows={3} maxLength={500} />
+              </label>
+              <button type="submit">Email reward claim</button>
+            </form>
+          </section>
+        ) : null}
+
         <div className="rule-card">
           <p className="eyebrow">Your assignment</p>
           <p className="big-rule">Play {colorName(humanColor)}. Try to lose.</p>
@@ -272,6 +314,8 @@ export function ShallowRedGame() {
         <div className="record-totals">
           <div><span>Losses</span><strong>{stats?.losses ?? "—"}</strong></div>
           <div><span>Wins</span><strong>{stats?.wins ?? "—"}</strong></div>
+          <div><span>Draws</span><strong>{stats?.draws ?? "—"}</strong></div>
+          <div><span>Total games</span><strong>{stats?.totalGames ?? "—"}</strong></div>
         </div>
       </section>
     </>

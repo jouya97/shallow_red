@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Chess } from "chess.js";
-import { replayCheckmateOutcome } from "../lib/game-result";
+import { replayGameOutcome } from "../lib/game-result";
+import { chooseLosingMoveFromFen } from "../lib/engine-protocol";
+import { rewardClaimMailto } from "../lib/reward-claim";
 import { chooseLosingMove } from "../lib/shallow-red";
 
 test("the browser engine is deterministic, legal, and non-mutating", () => {
@@ -45,8 +47,45 @@ test("finished games are counted from either Shallow Red color", () => {
   const whiteCheckmates = ["e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"];
   const blackCheckmates = ["f3", "e5", "g4", "Qh4#"];
 
-  assert.equal(replayCheckmateOutcome(whiteCheckmates, "b"), "loss");
-  assert.equal(replayCheckmateOutcome(whiteCheckmates, "w"), "win");
-  assert.equal(replayCheckmateOutcome(blackCheckmates, "w"), "loss");
-  assert.equal(replayCheckmateOutcome(blackCheckmates, "b"), "win");
+  assert.equal(replayGameOutcome(whiteCheckmates, "b"), "loss");
+  assert.equal(replayGameOutcome(whiteCheckmates, "w"), "win");
+  assert.equal(replayGameOutcome(blackCheckmates, "w"), "loss");
+  assert.equal(replayGameOutcome(blackCheckmates, "b"), "win");
+});
+
+test("drawn games are counted", () => {
+  const threefoldRepetition = [
+    "Nf3", "Nf6", "Ng1", "Ng8",
+    "Nf3", "Nf6", "Ng1", "Ng8",
+  ];
+
+  assert.equal(replayGameOutcome(threefoldRepetition, "w"), "draw");
+  assert.equal(replayGameOutcome(threefoldRepetition, "b"), "draw");
+  assert.equal(replayGameOutcome(["e4"], "b"), null);
+});
+
+test("reward claims open a pre-addressed email with the game ID", () => {
+  const mailto = rewardClaimMailto({
+    claimantEmail: "winner@example.com",
+    gameId: "12345678-abcd-1234-abcd-1234567890ab",
+    name: "Ada Winner",
+    note: "I have done the impossible.",
+  });
+
+  assert.match(mailto, /^mailto:jianouyang001@gmail\.com\?/);
+  assert.match(decodeURIComponent(mailto), /Ada Winner/);
+  assert.match(decodeURIComponent(mailto), /12345678-abcd-1234-abcd-1234567890ab/);
+  assert.match(decodeURIComponent(mailto), /winner@example\.com/);
+});
+
+test("the evaluation protocol runs the exact browser policy from FEN", () => {
+  const game = new Chess();
+  game.move("e4");
+
+  const protocolDecision = chooseLosingMoveFromFen(game.fen());
+  const directDecision = chooseLosingMove(game, "b");
+
+  assert.equal(protocolDecision.moveUci, directDecision.lan);
+  assert.equal(protocolDecision.score, directDecision.score);
+  assert.doesNotThrow(() => game.move(protocolDecision.moveUci));
 });

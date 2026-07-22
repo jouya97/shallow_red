@@ -35,6 +35,7 @@ from worst_chess.agents.weak import (
     MaterialOpponentWeights,
     NoisyOpponentAgent,
 )
+from worst_chess.agents.web import WebEngineAgent
 
 __all__ = [
     "Agent",
@@ -70,4 +71,5 @@ __all__ = [
     "SyzygyMoveScore",
     "SelfishLoserOpponentAgent",
     "CaptureFirstOpponentAgent",
+    "WebEngineAgent",
 ]

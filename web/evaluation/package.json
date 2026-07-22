@@ -1,0 +1,9 @@
+{
+  "name": "shallow-red-web-evaluation-runtime",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "chess.js": "1.4.0",
+    "tsx": "4.20.6"
+  }
+}
