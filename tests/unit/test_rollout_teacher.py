@@ -137,6 +137,33 @@ def test_scorer_finds_fools_mate_reply_and_scores_every_move() -> None:
     assert tuple(board.move_stack) == original_stack
 
 
+def test_scorer_evaluates_only_a_legal_deduplicated_candidate_subset() -> None:
+    board = chess.Board()
+    scorer = LexicographicRolloutScorer(
+        _first_legal,
+        _first_legal,
+        RolloutConfig(rollouts=1, max_plies=1),
+    )
+    candidates = [
+        chess.Move.from_uci("h2h4"),
+        chess.Move.from_uci("a2a3"),
+    ]
+
+    summaries = scorer.evaluate_candidates(board, _context(), candidates)
+
+    assert [item.move.uci() for item in summaries] == ["a2a3", "h2h4"]
+    with pytest.raises(ValueError, match="empty"):
+        scorer.evaluate_candidates(board, _context(), [])
+    with pytest.raises(ValueError, match="duplicates"):
+        scorer.evaluate_candidates(board, _context(), candidates * 2)
+    with pytest.raises(AgentError, match="illegal"):
+        scorer.evaluate_candidates(
+            board,
+            _context(),
+            [chess.Move.from_uci("a1a8")],
+        )
+
+
 def test_common_random_contexts_match_across_candidate_actions_and_roles() -> None:
     records: dict[str, dict[str, list[tuple[str, int, int]]]] = {
         "target": defaultdict(list),

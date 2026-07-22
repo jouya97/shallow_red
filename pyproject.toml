@@ -24,6 +24,9 @@ dev = [
 ml = [
   "torch>=2.3",
 ]
+cloud = [
+  "modal>=1.4.3,<2",
+]
 
 [project.scripts]
 worst-chess = "worst_chess.cli:main"

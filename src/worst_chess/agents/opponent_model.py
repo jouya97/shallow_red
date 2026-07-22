@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass
 
@@ -267,7 +268,7 @@ class RandomReplySearchAgent:
 
 
 class StalemateAwareRandomReplySearchAgent(RandomReplySearchAgent):
-    """Preserve the last target pieces and mobility to avoid late stalemate."""
+    """Preserve late mobility and optionally override for immediate mate."""
 
     def __init__(
         self,
@@ -277,6 +278,9 @@ class StalemateAwareRandomReplySearchAgent(RandomReplySearchAgent):
         low_material_threshold: int = 1_000,
         pressure_scale: float = 1.0,
         pressure_min_material: int = 0,
+        cycle_penalty: float = 0.0,
+        tactical_mate_override: bool = False,
+        forced_mate_override: bool = False,
     ) -> None:
         if low_material_threshold <= 0:
             raise ValueError("low_material_threshold must be positive")
@@ -284,6 +288,13 @@ class StalemateAwareRandomReplySearchAgent(RandomReplySearchAgent):
             raise ValueError("pressure_scale must be finite and positive")
         if pressure_min_material < 0:
             raise ValueError("pressure_min_material must be nonnegative")
+        if not math.isfinite(cycle_penalty) or cycle_penalty < 0:
+            raise ValueError("cycle_penalty must be finite and nonnegative")
+        if tactical_mate_override and forced_mate_override:
+            raise ValueError(
+                "tactical_mate_override and forced_mate_override are mutually "
+                "exclusive"
+            )
         super().__init__(
             policy,
             top_k=top_k,
@@ -295,15 +306,271 @@ class StalemateAwareRandomReplySearchAgent(RandomReplySearchAgent):
         )
         self.pressure_scale = pressure_scale
         self.pressure_min_material = pressure_min_material
+        self.cycle_penalty = cycle_penalty
+        self.tactical_mate_override = tactical_mate_override
+        self.forced_mate_override = forced_mate_override
+
+    def select_move(self, board: chess.Board, context: MoveContext) -> chess.Move:
+        """Take the best all-legal immediate mate chance when opted in."""
+
+        if not (self.tactical_mate_override or self.forced_mate_override):
+            return super().select_move(board, context)
+        if board.turn != context.target_color:
+            raise AgentError(
+                "StalemateAwareRandomReplySearchAgent must act for the target color"
+            )
+        legal = sorted(board.legal_moves, key=chess.Move.uci)
+        if not legal:
+            raise AgentError(
+                "StalemateAwareRandomReplySearchAgent cannot move from a terminal "
+                "position"
+            )
+
+        best_move: chess.Move | None = None
+        best_probability = 0.0
+        for move in legal:
+            probability = self._immediate_mate_probability(
+                board,
+                move,
+                context.target_color,
+            )
+            eligible = (
+                probability == 1.0
+                if self.forced_mate_override
+                else probability > 0.0
+            )
+            if eligible and (
+                best_move is None or probability > best_probability
+            ):
+                best_move = move
+                best_probability = probability
+        if best_move is not None:
+            return best_move
+        return super().select_move(board, context)
+
+    @staticmethod
+    def _immediate_mate_probability(
+        board: chess.Board,
+        move: chess.Move,
+        target_color: chess.Color,
+    ) -> float:
+        """Return the exact uniform-reply chance of the target being mated."""
+
+        position = board.copy(stack=False)
+        position.push(move)
+        if position.is_game_over(claim_draw=False):
+            return 0.0
+        replies = tuple(position.legal_moves)
+        mate_count = 0
+        for reply in replies:
+            after = position.copy(stack=False)
+            after.push(reply)
+            mate_count += int(
+                after.is_checkmate() and after.turn == target_color
+            )
+        return mate_count / len(replies)
+
+    def score_move(
+        self,
+        board: chess.Board,
+        move: chess.Move,
+        target_color: chess.Color,
+        *,
+        policy_logit: float = 0.0,
+    ) -> float:
+        """Apply an optional penalty when ``move`` repeats a prior position."""
+
+        score = super().score_move(
+            board,
+            move,
+            target_color,
+            policy_logit=policy_logit,
+        )
+        if self.cycle_penalty == 0.0:
+            return score
+        position = board.copy(stack=True)
+        position.push(move)
+        if position.is_repetition(2):
+            score -= self.cycle_penalty
+        return score
 
     @property
     def name(self) -> str:
         prefix = "policy_" if self.policy is not None else "all_"
-        return (
+        name = (
             f"stalemate_aware_random_reply_{prefix}top_{self.top_k}_"
             f"pressure_{self.pressure_scale:g}_"
             f"above_{self.pressure_min_material}"
         )
+        if self.cycle_penalty > 0.0:
+            name += f"_cycle_penalty_{self.cycle_penalty:g}"
+        if self.tactical_mate_override:
+            name += "_tactical_mate_override"
+        if self.forced_mate_override:
+            name += "_forced_mate_override"
+        return name
+
+
+@dataclass(frozen=True, slots=True)
+class SampledExpectimaxConfig:
+    """Controls deterministic common-random opponent-reply sampling."""
+
+    reply_samples: int = 4
+    seed: int = 20260721
+
+    def __post_init__(self) -> None:
+        if self.reply_samples < 1:
+            raise ValueError("reply_samples must be positive")
+        if self.reply_samples > 1_024:
+            raise ValueError("reply_samples must not exceed 1024")
+
+
+class TwoTurnRandomReplyAgent:
+    """Look through one random opponent reply and one further target turn.
+
+    Root moves come from the neural policy shortlist.  Each root is evaluated
+    with the same deterministic random fractions, mapped onto that root's
+    UCI-sorted legal replies.  The continuation is the existing one-ply
+    stalemate-aware random-reply search using the same neural policy.
+    """
+
+    _SELF_MATE_VALUE = 1.0e30
+    # One sampled selfmate must dominate every lower-priority sampled result.
+    # Draws remain preferable to certain target wins, while nonterminal leaf
+    # scores (normally around 1e12 or less) can still outrank a certain draw.
+    _DRAW_VALUE = -1.0e15
+    _TARGET_WIN_VALUE = -1.0e20
+
+    def __init__(
+        self,
+        policy: NeuralAgent,
+        *,
+        top_k: int = 8,
+        config: SampledExpectimaxConfig | None = None,
+        continuation: StalemateAwareRandomReplySearchAgent | None = None,
+    ) -> None:
+        if top_k < 1:
+            raise ValueError("top_k must be positive")
+        self.policy = policy
+        self.top_k = top_k
+        self.config = config or SampledExpectimaxConfig()
+        self.continuation = continuation or StalemateAwareRandomReplySearchAgent(
+            policy,
+            top_k=top_k,
+        )
+
+    @property
+    def name(self) -> str:
+        return (
+            f"two_turn_random_reply_top_{self.top_k}_"
+            f"samples_{self.config.reply_samples}_seed_{self.config.seed}"
+        )
+
+    def select_move(self, board: chess.Board, context: MoveContext) -> chess.Move:
+        scores = self.score_candidates(board, context)
+        return max(sorted(scores, key=chess.Move.uci), key=scores.__getitem__)
+
+    def score_candidates(
+        self,
+        board: chess.Board,
+        context: MoveContext,
+    ) -> dict[chess.Move, float]:
+        """Return sampled two-target-turn values without mutating ``board``."""
+
+        if board.turn != context.target_color:
+            raise AgentError("TwoTurnRandomReplyAgent must act for the target color")
+        if board.is_game_over(claim_draw=False):
+            raise AgentError(
+                "TwoTurnRandomReplyAgent cannot move from a terminal position"
+            )
+        ranked = self.policy.rank_moves(board, context, top_k=self.top_k)
+        candidates = sorted((item.move for item in ranked), key=chess.Move.uci)
+        if not candidates:
+            raise AgentError("neural policy returned no root candidates")
+        for move in candidates:
+            if move not in board.legal_moves:
+                raise AgentError(f"neural policy returned illegal move {move.uci()}")
+
+        sample_words = tuple(
+            self._sample_word(context, sample_index)
+            for sample_index in range(self.config.reply_samples)
+        )
+        return {
+            move: self._score_root(board, move, context, sample_words)
+            for move in candidates
+        }
+
+    def _score_root(
+        self,
+        board: chess.Board,
+        move: chess.Move,
+        context: MoveContext,
+        sample_words: tuple[int, ...],
+    ) -> float:
+        position = board.copy(stack=True)
+        position.push(move)
+        terminal = self._terminal_value(position, context.target_color)
+        if terminal is not None:
+            return terminal
+
+        replies = sorted(position.legal_moves, key=chess.Move.uci)
+        leaf_values: list[float] = []
+        for word in sample_words:
+            reply = replies[(word * len(replies)) >> 64]
+            successor = position.copy(stack=True)
+            successor.push(reply)
+            terminal = self._terminal_value(successor, context.target_color)
+            if terminal is not None:
+                leaf_values.append(terminal)
+                continue
+
+            continuation_context = MoveContext(
+                game_id=context.game_id,
+                ply=context.ply + 2,
+                seed=context.seed,
+                target_color=context.target_color,
+            )
+            target_move = self.continuation.select_move(
+                successor,
+                continuation_context,
+            )
+            after_target = successor.copy(stack=True)
+            after_target.push(target_move)
+            terminal = self._terminal_value(after_target, context.target_color)
+            if terminal is not None:
+                leaf_values.append(terminal)
+            else:
+                leaf_values.append(
+                    self.continuation.score_move(
+                        successor,
+                        target_move,
+                        context.target_color,
+                    )
+                )
+        return math.fsum(leaf_values) / len(leaf_values)
+
+    def _sample_word(self, context: MoveContext, sample_index: int) -> int:
+        payload = (
+            f"two-turn-random-reply-v1|{self.config.seed}|{context.seed}|"
+            f"{context.game_id}|{context.ply}|{sample_index}"
+        ).encode()
+        return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big")
+
+    @classmethod
+    def _terminal_value(
+        cls,
+        board: chess.Board,
+        target_color: chess.Color,
+    ) -> float | None:
+        if board.is_checkmate():
+            return (
+                cls._SELF_MATE_VALUE
+                if board.turn == target_color
+                else cls._TARGET_WIN_VALUE
+            )
+        if board.is_game_over(claim_draw=False):
+            return cls._DRAW_VALUE
+        return None
 
 
 class OpportunisticHybridAgent:

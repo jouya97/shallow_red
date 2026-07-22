@@ -1,7 +1,7 @@
 # Worst Chess Ever: research and implementation plan
 
-Status: Phases 0-2 implemented; weak-opponent v0.3 candidate evaluated
-Last updated: 2026-07-21
+Status: Phases 0-2 implemented; v0.3 remains selected after adversarial, exact-endgame, and speed ablations
+Last updated: 2026-07-22
 
 ## 1. Objective
 
@@ -30,6 +30,14 @@ work adds limited-strength and handcrafted weak opponents, deterministic noisy
 and regime-switching portfolios, a random-reply teacher/search policy,
 backward-compatible perspective-aligned neural actions, and late-game
 stalemate avoidance. See `reports/V03_WEAK_OPPONENTS_2026-07-21.md`.
+The next-stage pilot adds an opponent that explicitly tries to lose to the
+target, exact local Syzygy guidance with all-or-nothing fallback, and Modal
+CPU/L4 execution. See `reports/ADVERSARIAL_ENDGAME_2026-07-21.md`.
+The overnight extension exactly solves the history-free reverse objective for
+all three-piece families and KBvKR, adds a predictive frozen-policy exploit
+opponent, and rejects repetition penalties, deployment-matched rollout
+mixtures, inference rollouts, and unsafe immediate-mate overrides under paired
+full-game gates. See `reports/OVERNIGHT_EXPERIMENTS_2026-07-22.md`.
 
 ## 3. Formal game definition
 

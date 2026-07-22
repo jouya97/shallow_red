@@ -20,22 +20,27 @@ import torch
 from worst_chess import __version__
 from worst_chess.agents.adapters import SelfishLoserOpponentAgent
 from worst_chess.agents.base import Agent, MoveContext
+from worst_chess.agents.exploit import FrozenTargetExploitOpponentAgent
 from worst_chess.agents.heuristic import HeuristicAgent
 from worst_chess.agents.neural import NeuralAgent
 from worst_chess.agents.opponent_model import (
     OpportunisticHybridAgent,
     RandomReplySearchAgent,
+    SampledExpectimaxConfig,
     StalemateAwareRandomReplySearchAgent,
+    TwoTurnRandomReplyAgent,
 )
 from worst_chess.agents.policy_search import PolicyGuidedReverseSearchAgent
 from worst_chess.agents.portfolio import RegimeSwitchingOpponentAgent
 from worst_chess.agents.random import RandomAgent
 from worst_chess.agents.resistant import ResistantOpponentAgent
+from worst_chess.agents.rollout_search import NeuralShortlistRolloutAgent
 from worst_chess.agents.stockfish import (
     LimitedStrengthStockfishAgent,
     ReverseStockfishAgent,
     StockfishAgent,
 )
+from worst_chess.agents.tablebase import SyzygyLosingAgent
 from worst_chess.agents.weak import (
     CaptureFirstOpponentAgent,
     MaterialOpponentAgent,
@@ -99,7 +104,12 @@ OPPONENT_CHOICES = (
     "random",
     "resistant",
 )
-SMOKE_OPPONENT_CHOICES = (*OPPONENT_CHOICES, "selfish-loser")
+SMOKE_OPPONENT_CHOICES = (
+    *OPPONENT_CHOICES,
+    "selfish-loser",
+    "selfish-reverse-stockfish",
+    "frozen-target-exploit",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +144,9 @@ def build_parser() -> argparse.ArgumentParser:
             "policy-guided",
             "random-reply",
             "stalemate-aware",
+            "two-turn-random-reply",
             "opportunistic",
+            "rollout-search",
         ),
         default="heuristic",
     )
@@ -148,9 +160,50 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--max-plies", type=int, default=300)
     smoke.add_argument("--target-nodes", type=int, default=64)
     smoke.add_argument("--search-top-k", type=int, default=8)
+    smoke.add_argument(
+        "--reply-samples",
+        type=int,
+        default=4,
+        help="common-random opponent replies per root for two-turn search",
+    )
+    smoke.add_argument(
+        "--rollouts",
+        type=int,
+        default=2,
+        help="counterfactual samples per root move for rollout-search",
+    )
+    smoke.add_argument(
+        "--rollout-plies",
+        type=int,
+        default=80,
+        help="maximum plies per counterfactual rollout",
+    )
     smoke.add_argument("--reply-pressure-scale", type=float, default=1.0)
     smoke.add_argument("--reply-pressure-min-material", type=int, default=0)
+    smoke.add_argument(
+        "--cycle-penalty",
+        type=float,
+        default=0.0,
+        help="stalemate-aware penalty for recreating a prior position",
+    )
+    mate_override = smoke.add_mutually_exclusive_group()
+    mate_override.add_argument(
+        "--tactical-mate-override",
+        action="store_true",
+        help="scan all legal target moves for immediate self-mate replies",
+    )
+    mate_override.add_argument(
+        "--forced-mate-override",
+        action="store_true",
+        help="override only when every legal opponent reply is immediate mate",
+    )
     smoke.add_argument("--opponent-nodes", type=int, default=1_000)
+    smoke.add_argument(
+        "--exploit-candidates",
+        type=int,
+        default=24,
+        help="target-policy lookahead candidates for frozen-target-exploit",
+    )
     smoke.add_argument(
         "--openings",
         type=int,
@@ -161,6 +214,11 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--stockfish", default=shutil.which("stockfish"))
     smoke.add_argument("--checkpoint", type=Path)
     smoke.add_argument("--device", default="cpu")
+    smoke.add_argument(
+        "--tablebase",
+        type=Path,
+        help="optional local Syzygy directory for exact endgame guidance",
+    )
     smoke.add_argument("--output", type=Path, default=Path("artifacts/smoke"))
     verify = subparsers.add_parser(
         "verify-actions",
@@ -249,6 +307,18 @@ def build_parser() -> argparse.ArgumentParser:
     rerank.add_argument("--positions", type=int, default=100)
     rerank.add_argument("--rollouts", type=int, default=8)
     rerank.add_argument("--rollout-plies", type=int, default=160)
+    rerank.add_argument(
+        "--target-continuation",
+        choices=("neural", "stalemate-aware"),
+        default="neural",
+        help="policy used for future target turns inside each rollout",
+    )
+    rerank.add_argument(
+        "--target-top-k",
+        type=int,
+        default=4,
+        help="neural candidates searched by stalemate-aware continuation",
+    )
     rerank.add_argument("--seed", type=int, default=20260721)
     rerank.add_argument("--device", default="cpu")
     rerank.add_argument("--workers", type=int, default=1)
@@ -303,6 +373,13 @@ def _target_agent(
     search_top_k: int = 8,
     reply_pressure_scale: float = 1.0,
     reply_pressure_min_material: int = 0,
+    cycle_penalty: float = 0.0,
+    tactical_mate_override: bool = False,
+    forced_mate_override: bool = False,
+    rollout_count: int = 2,
+    rollout_plies: int = 80,
+    rollout_seed: int = 20260721,
+    reply_samples: int = 4,
 ) -> Agent:
     if name == "random":
         return RandomAgent()
@@ -342,6 +419,23 @@ def _target_agent(
             top_k=search_top_k,
             pressure_scale=reply_pressure_scale,
             pressure_min_material=reply_pressure_min_material,
+            cycle_penalty=cycle_penalty,
+            tactical_mate_override=tactical_mate_override,
+            forced_mate_override=forced_mate_override,
+        )
+    if name == "two-turn-random-reply":
+        if checkpoint is None:
+            raise ValueError(
+                "--checkpoint is required for a two-turn-random-reply target"
+            )
+        two_turn_policy = NeuralAgent.from_checkpoint(checkpoint, device=device)
+        return TwoTurnRandomReplyAgent(
+            two_turn_policy,
+            top_k=search_top_k,
+            config=SampledExpectimaxConfig(
+                reply_samples=reply_samples,
+                seed=rollout_seed,
+            ),
         )
     if name == "opportunistic":
         if checkpoint is None:
@@ -359,6 +453,23 @@ def _target_agent(
             opportunistic_evaluator,
             policy_top_k=search_top_k,
             reverse_top_k=min(8, search_top_k),
+        )
+    if name == "rollout-search":
+        if checkpoint is None:
+            raise ValueError("--checkpoint is required for a rollout-search target")
+        policy = NeuralAgent.from_checkpoint(
+            checkpoint,
+            device=device,
+            agent_name="rollout-search-continuation",
+        )
+        return NeuralShortlistRolloutAgent(
+            policy,
+            top_k=search_top_k,
+            config=RolloutConfig(
+                rollouts=rollout_count,
+                max_plies=rollout_plies,
+                seed=rollout_seed,
+            ),
         )
     if stockfish is None:
         raise ValueError("--stockfish is required for a reverse-stockfish target")
@@ -456,10 +567,21 @@ def _run_smoke(arguments: argparse.Namespace) -> int:
             arguments.search_top_k,
             arguments.reply_pressure_scale,
             arguments.reply_pressure_min_material,
+            arguments.cycle_penalty,
+            arguments.tactical_mate_override,
+            arguments.forced_mate_override,
+            arguments.rollouts,
+            arguments.rollout_plies,
+            arguments.seed,
+            arguments.reply_samples,
         )
+        if arguments.tablebase is not None:
+            target = stack.enter_context(
+                SyzygyLosingAgent(arguments.tablebase, target)
+            )
         opponent: Agent
-        if arguments.opponent == "selfish-loser":
-            selfish_policy = _target_agent(
+        if arguments.opponent == "frozen-target-exploit":
+            frozen_target = _target_agent(
                 arguments.target,
                 arguments.stockfish,
                 arguments.target_nodes,
@@ -469,6 +591,53 @@ def _run_smoke(arguments: argparse.Namespace) -> int:
                 arguments.search_top_k,
                 arguments.reply_pressure_scale,
                 arguments.reply_pressure_min_material,
+                arguments.cycle_penalty,
+                arguments.tactical_mate_override,
+                arguments.forced_mate_override,
+                arguments.rollouts,
+                arguments.rollout_plies,
+                arguments.seed,
+                arguments.reply_samples,
+            )
+            if arguments.tablebase is not None:
+                frozen_target = stack.enter_context(
+                    SyzygyLosingAgent(arguments.tablebase, frozen_target)
+                )
+            opponent = FrozenTargetExploitOpponentAgent(
+                frozen_target,
+                candidate_limit=arguments.exploit_candidates,
+            )
+        elif arguments.opponent in {
+            "selfish-loser",
+            "selfish-reverse-stockfish",
+        }:
+            selfish_policy_name = (
+                arguments.target
+                if arguments.opponent == "selfish-loser"
+                else "reverse-stockfish"
+            )
+            selfish_policy_nodes = (
+                arguments.target_nodes
+                if arguments.opponent == "selfish-loser"
+                else arguments.opponent_nodes
+            )
+            selfish_policy = _target_agent(
+                selfish_policy_name,
+                arguments.stockfish,
+                selfish_policy_nodes,
+                stack,
+                arguments.checkpoint,
+                arguments.device,
+                arguments.search_top_k,
+                arguments.reply_pressure_scale,
+                arguments.reply_pressure_min_material,
+                arguments.cycle_penalty,
+                arguments.tactical_mate_override,
+                arguments.forced_mate_override,
+                arguments.rollouts,
+                arguments.rollout_plies,
+                arguments.seed,
+                arguments.reply_samples,
             )
             opponent = SelfishLoserOpponentAgent(selfish_policy)
         else:
@@ -749,6 +918,8 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
         )
     if type(arguments.workers) is not int or arguments.workers <= 0:
         raise ValueError("--workers must be a positive integer")
+    if type(arguments.target_top_k) is not int or arguments.target_top_k <= 0:
+        raise ValueError("--target-top-k must be a positive integer")
     if arguments.workers > 1:
         try:
             device_type = torch.device(arguments.device).type
@@ -773,9 +944,14 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
     )[: arguments.positions]
     tasks: list[_RolloutRerankTask] = []
     for output_index, (input_index, position) in enumerate(ordered):
+        continuation_id = (
+            "target-frozen-neural"
+            if arguments.target_continuation == "neural"
+            else f"target-stalemate-aware-top{arguments.target_top_k}"
+        )
         source_id = (
             f"{position.source_id}/rollout-rerank-v1"
-            "-target-frozen-neural-opponent-uniform-random"
+            f"-{continuation_id}-opponent-uniform-random"
             f"-r{config.rollouts}-h{config.max_plies}-seed{config.seed}"
             f"-checkpoint{checkpoint_digest}-input{input_digest}"
         )
@@ -790,10 +966,11 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
         )
 
     if arguments.workers == 1:
-        target = NeuralAgent.from_checkpoint(
+        target = _build_rollout_target(
             arguments.checkpoint,
-            device=arguments.device,
-            agent_name="rollout-future-target",
+            arguments.device,
+            arguments.target_continuation,
+            arguments.target_top_k,
         )
         scorer = LexicographicRolloutScorer(target, RandomAgent(), config)
         reranked = [_rerank_rollout_task(task, scorer) for task in tasks]
@@ -802,7 +979,13 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
             max_workers=arguments.workers,
             mp_context=multiprocessing.get_context("spawn"),
             initializer=_initialize_rollout_worker,
-            initargs=(str(arguments.checkpoint), arguments.device, config),
+            initargs=(
+                str(arguments.checkpoint),
+                arguments.device,
+                config,
+                arguments.target_continuation,
+                arguments.target_top_k,
+            ),
         ) as executor:
             reranked = list(
                 executor.map(
@@ -826,18 +1009,39 @@ def _initialize_rollout_worker(
     checkpoint: str,
     device: str,
     config: RolloutConfig,
+    target_continuation: str = "neural",
+    target_top_k: int = 4,
 ) -> None:
     global _ROLLOUT_WORKER_SCORER
-    target = NeuralAgent.from_checkpoint(
+    target = _build_rollout_target(
         checkpoint,
-        device=device,
-        agent_name="rollout-future-target",
+        device,
+        target_continuation,
+        target_top_k,
     )
     _ROLLOUT_WORKER_SCORER = LexicographicRolloutScorer(
         target,
         RandomAgent(),
         config,
     )
+
+
+def _build_rollout_target(
+    checkpoint: str | Path,
+    device: str,
+    continuation: str,
+    top_k: int,
+) -> Agent:
+    policy = NeuralAgent.from_checkpoint(
+        checkpoint,
+        device=device,
+        agent_name="rollout-future-target",
+    )
+    if continuation == "neural":
+        return policy
+    if continuation == "stalemate-aware":
+        return StalemateAwareRandomReplySearchAgent(policy, top_k=top_k)
+    raise ValueError(f"unknown rollout target continuation {continuation!r}")
 
 
 def _run_rollout_worker_task(task: _RolloutRerankTask) -> RankedPosition:

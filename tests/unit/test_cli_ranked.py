@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 
@@ -110,6 +111,10 @@ def test_rerank_rollouts_cli_exposes_required_controls() -> None:
             "3",
             "--rollout-plies",
             "40",
+            "--target-continuation",
+            "stalemate-aware",
+            "--target-top-k",
+            "6",
             "--seed",
             "99",
             "--device",
@@ -122,8 +127,33 @@ def test_rerank_rollouts_cli_exposes_required_controls() -> None:
     assert arguments.positions == 7
     assert arguments.rollouts == 3
     assert arguments.rollout_plies == 40
+    assert arguments.target_continuation == "stalemate-aware"
+    assert arguments.target_top_k == 6
     assert arguments.seed == 99
     assert arguments.workers == 2
+
+
+def test_build_rollout_target_can_match_deployed_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen_policy = object()
+
+    monkeypatch.setattr(
+        cli.NeuralAgent,
+        "from_checkpoint",
+        classmethod(lambda cls, path, **kwargs: frozen_policy),
+    )
+
+    target = cli._build_rollout_target(
+        "model.pt",
+        "cpu",
+        "stalemate-aware",
+        5,
+    )
+
+    assert isinstance(target, cli.StalemateAwareRandomReplySearchAgent)
+    assert target.policy is frozen_policy
+    assert target.top_k == 5
 
 
 def test_rerank_rollouts_is_deterministic_and_preserves_lineage(
@@ -449,9 +479,215 @@ def test_smoke_cli_exposes_selfish_loser_opponent_and_pressure() -> None:
             "4",
             "--reply-pressure-min-material",
             "2000",
+            "--cycle-penalty",
+            "1e12",
+            "--tactical-mate-override",
         ]
     )
 
     assert arguments.opponent == "selfish-loser"
     assert arguments.reply_pressure_scale == 4.0
     assert arguments.reply_pressure_min_material == 2_000
+    assert arguments.cycle_penalty == 1e12
+    assert arguments.tactical_mate_override is True
+
+
+def test_target_factory_applies_stalemate_aware_cycle_penalty() -> None:
+    with ExitStack() as stack:
+        target = cli._target_agent(
+            "stalemate-aware",
+            None,
+            64,
+            stack,
+            None,
+            "cpu",
+            cycle_penalty=123.0,
+        )
+
+    assert isinstance(target, cli.StalemateAwareRandomReplySearchAgent)
+    assert target.cycle_penalty == 123.0
+
+
+def test_target_factory_applies_tactical_mate_override() -> None:
+    with ExitStack() as stack:
+        target = cli._target_agent(
+            "stalemate-aware",
+            None,
+            64,
+            stack,
+            None,
+            "cpu",
+            tactical_mate_override=True,
+        )
+
+    assert isinstance(target, cli.StalemateAwareRandomReplySearchAgent)
+    assert target.tactical_mate_override is True
+
+
+def test_smoke_cli_and_target_factory_apply_forced_mate_override() -> None:
+    arguments = cli.build_parser().parse_args(
+        ["smoke", "--target", "stalemate-aware", "--forced-mate-override"]
+    )
+    with ExitStack() as stack:
+        target = cli._target_agent(
+            arguments.target,
+            None,
+            64,
+            stack,
+            None,
+            "cpu",
+            forced_mate_override=arguments.forced_mate_override,
+        )
+
+    assert isinstance(target, cli.StalemateAwareRandomReplySearchAgent)
+    assert target.forced_mate_override is True
+
+
+def test_smoke_cli_rejects_both_mate_override_modes() -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(
+            [
+                "smoke",
+                "--tactical-mate-override",
+                "--forced-mate-override",
+            ]
+        )
+
+
+def test_smoke_cli_exposes_selfish_reverse_stockfish_adversary() -> None:
+    arguments = cli.build_parser().parse_args(
+        [
+            "smoke",
+            "--target",
+            "neural",
+            "--checkpoint",
+            "model.pt",
+            "--opponent",
+            "selfish-reverse-stockfish",
+            "--opponent-nodes",
+            "32",
+        ]
+    )
+
+    assert arguments.opponent == "selfish-reverse-stockfish"
+    assert arguments.opponent_nodes == 32
+
+
+def test_smoke_cli_exposes_frozen_target_exploit_adversary() -> None:
+    arguments = cli.build_parser().parse_args(
+        [
+            "smoke",
+            "--target",
+            "stalemate-aware",
+            "--checkpoint",
+            "model.pt",
+            "--opponent",
+            "frozen-target-exploit",
+            "--exploit-candidates",
+            "12",
+        ]
+    )
+
+    assert arguments.opponent == "frozen-target-exploit"
+    assert arguments.exploit_candidates == 12
+
+
+def test_smoke_cli_builds_neural_shortlist_rollout_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FrozenPolicy:
+        def select_move(
+            self, board: chess.Board, context: MoveContext
+        ) -> chess.Move:
+            del context
+            return min(board.legal_moves, key=chess.Move.uci)
+
+    frozen_policy = FrozenPolicy()
+    monkeypatch.setattr(
+        cli.NeuralAgent,
+        "from_checkpoint",
+        classmethod(lambda cls, path, **kwargs: frozen_policy),
+    )
+    arguments = cli.build_parser().parse_args(
+        [
+            "smoke",
+            "--target",
+            "rollout-search",
+            "--checkpoint",
+            "model.pt",
+            "--search-top-k",
+            "5",
+            "--rollouts",
+            "3",
+            "--rollout-plies",
+            "48",
+            "--seed",
+            "123",
+        ]
+    )
+
+    with ExitStack() as stack:
+        target = cli._target_agent(
+            arguments.target,
+            arguments.stockfish,
+            arguments.target_nodes,
+            stack,
+            arguments.checkpoint,
+            arguments.device,
+            arguments.search_top_k,
+            rollout_count=arguments.rollouts,
+            rollout_plies=arguments.rollout_plies,
+            rollout_seed=arguments.seed,
+        )
+
+    assert isinstance(target, cli.NeuralShortlistRolloutAgent)
+    assert target.policy is frozen_policy
+    assert target.top_k == 5
+    assert target.config == RolloutConfig(rollouts=3, max_plies=48, seed=123)
+
+
+def test_smoke_cli_builds_two_turn_random_reply_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen_policy = object()
+    monkeypatch.setattr(
+        cli.NeuralAgent,
+        "from_checkpoint",
+        classmethod(lambda cls, path, **kwargs: frozen_policy),
+    )
+    arguments = cli.build_parser().parse_args(
+        [
+            "smoke",
+            "--target",
+            "two-turn-random-reply",
+            "--checkpoint",
+            "model.pt",
+            "--search-top-k",
+            "5",
+            "--reply-samples",
+            "7",
+            "--seed",
+            "123",
+        ]
+    )
+
+    with ExitStack() as stack:
+        target = cli._target_agent(
+            arguments.target,
+            arguments.stockfish,
+            arguments.target_nodes,
+            stack,
+            arguments.checkpoint,
+            arguments.device,
+            arguments.search_top_k,
+            rollout_seed=arguments.seed,
+            reply_samples=arguments.reply_samples,
+        )
+
+    assert isinstance(target, cli.TwoTurnRandomReplyAgent)
+    assert target.policy is frozen_policy
+    assert target.top_k == 5
+    assert target.config == cli.SampledExpectimaxConfig(
+        reply_samples=7,
+        seed=123,
+    )

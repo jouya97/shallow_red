@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast
 
@@ -160,12 +160,36 @@ class LexicographicRolloutScorer:
     ) -> tuple[RolloutMoveScore, ...]:
         """Return UCI-ordered, auditable rollout summaries for all legal moves."""
 
+        return self.evaluate_candidates(board, context, board.legal_moves)
+
+    def evaluate_candidates(
+        self,
+        board: chess.Board,
+        context: MoveContext,
+        candidates: Iterable[chess.Move],
+    ) -> tuple[RolloutMoveScore, ...]:
+        """Evaluate a non-empty legal subset, ordered deterministically by UCI."""
+
         _validate_scoring_position(board, context)
         original_fen = board.fen(en_passant="fen")
         original_stack = tuple(board.move_stack)
-        candidates = tuple(sorted(board.legal_moves, key=chess.Move.uci))
+        candidate_tuple = tuple(candidates)
+        if not candidate_tuple:
+            raise ValueError("rollout candidate set must not be empty")
+        if any(not isinstance(move, chess.Move) for move in candidate_tuple):
+            raise TypeError("rollout candidates must be chess.Move instances")
+        if len(set(candidate_tuple)) != len(candidate_tuple):
+            raise ValueError("rollout candidates must not contain duplicates")
+        illegal = [move for move in candidate_tuple if move not in board.legal_moves]
+        if illegal:
+            raise AgentError(
+                f"rollout candidate is illegal: "
+                f"{min(illegal, key=chess.Move.uci).uci()}"
+            )
+        ordered_candidates = tuple(sorted(candidate_tuple, key=chess.Move.uci))
         summaries = tuple(
-            self._evaluate_candidate(board, context, move) for move in candidates
+            self._evaluate_candidate(board, context, move)
+            for move in ordered_candidates
         )
         if (
             board.fen(en_passant="fen") != original_fen
