@@ -25,6 +25,12 @@ from worst_chess.training.ranked_trainer import (
     evaluate_ranked,
     train_ranked,
 )
+from worst_chess.training.rollout_teacher import (
+    LexicographicRolloutScorer,
+    RolloutConfig,
+    RolloutMoveScore,
+    rollout_ranking_score,
+)
 from worst_chess.training.trainer import (
     EpochMetrics,
     TrainingConfig,
@@ -39,11 +45,14 @@ __all__ = [
     "DatasetSplit",
     "LabeledPosition",
     "Labeler",
+    "LexicographicRolloutScorer",
     "ModelConfig",
     "PolicyValueNetwork",
     "RankedAction",
     "RankedPosition",
     "RankedTrainingConfig",
+    "RolloutConfig",
+    "RolloutMoveScore",
     "EpochMetrics",
     "TrainingConfig",
     "TrainingResult",
@@ -53,6 +62,7 @@ __all__ = [
     "generate_ranked_trajectories",
     "read_jsonl",
     "read_ranked_jsonl",
+    "rollout_ranking_score",
     "split_by_trajectory",
     "split_ranked_by_trajectory",
     "train_policy",

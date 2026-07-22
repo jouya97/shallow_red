@@ -8,8 +8,18 @@ from torch import Tensor, nn
 from worst_chess.agents.base import AgentError, MoveContext
 from worst_chess.agents.neural import NeuralAgent
 from worst_chess.chess.actions import ACTION_SPACE_SIZE, encode_move
+from worst_chess.chess.neural_actions import (
+    ABSOLUTE_ACTION_ORIENTATION,
+    ACTION_ORIENTATION_METADATA_KEY,
+    PERSPECTIVE_ACTION_ORIENTATION,
+    encode_neural_move,
+)
 from worst_chess.chess.observations import OBSERVATION_SHAPE
-from worst_chess.training.model import ModelConfig, PolicyValueNetwork
+from worst_chess.training.model import (
+    ModelConfig,
+    PolicyValueNetwork,
+    save_checkpoint,
+)
 
 
 class FixedPolicy(PolicyValueNetwork):
@@ -59,6 +69,44 @@ def test_neural_agent_masks_illegal_high_logit() -> None:
 
     expected = min(board.legal_moves, key=lambda move: encode_move(board, move))
     assert selected == expected
+
+
+def test_neural_agent_decodes_black_perspective_policy_action() -> None:
+    board = chess.Board().mirror()
+    expected = chess.Move.from_uci("e7e5")
+    preferred = encode_neural_move(
+        board, expected, PERSPECTIVE_ACTION_ORIENTATION
+    )
+    agent = NeuralAgent(
+        FixedPolicy(preferred),
+        action_orientation=PERSPECTIVE_ACTION_ORIENTATION,
+    )
+
+    assert agent.select_move(board, _context(chess.BLACK)) == expected
+
+
+def test_checkpoint_metadata_selects_orientation_and_legacy_defaults_absolute(
+    tmp_path,
+) -> None:
+    model = PolicyValueNetwork(
+        ModelConfig(channels=2, residual_blocks=1, value_channels=1, value_hidden=2)
+    )
+    legacy_path = tmp_path / "legacy.pt"
+    perspective_path = tmp_path / "perspective.pt"
+    save_checkpoint(model, legacy_path)
+    save_checkpoint(
+        model,
+        perspective_path,
+        metadata={
+            ACTION_ORIENTATION_METADATA_KEY: PERSPECTIVE_ACTION_ORIENTATION
+        },
+    )
+
+    legacy = NeuralAgent.from_checkpoint(legacy_path)
+    perspective = NeuralAgent.from_checkpoint(perspective_path)
+
+    assert legacy.action_orientation == ABSOLUTE_ACTION_ORIENTATION
+    assert perspective.action_orientation == PERSPECTIVE_ACTION_ORIENTATION
 
 
 def test_neural_agent_ranks_all_legal_moves_and_limits_top_k() -> None:

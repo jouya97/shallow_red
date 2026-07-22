@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 
 import chess
+import pytest
 import torch
 
 from worst_chess.agents.base import MoveContext
@@ -10,6 +11,7 @@ from worst_chess.training.model import ModelConfig, PolicyValueNetwork
 from worst_chess.training.ranked_dataset import RankedPosition, rank_position
 from worst_chess.training.ranked_trainer import (
     RankedTrainingConfig,
+    _batch_tensors,
     evaluate_ranked,
     train_ranked,
 )
@@ -97,3 +99,51 @@ def test_ranked_evaluation_supports_missing_values() -> None:
     assert math.isfinite(metrics.loss)
     assert metrics.value_loss is None
     assert metrics.value_mae is None
+
+
+def test_perspective_training_tensors_align_mirrored_positions() -> None:
+    white = chess.Board()
+    black = white.mirror()
+
+    def make_position(
+        board: chess.Board, preferred: chess.Move, trajectory: str
+    ) -> RankedPosition:
+        context = MoveContext(trajectory, board.ply(), 3, board.turn)
+
+        def scorer(
+            scored_board: chess.Board, scored_context: MoveContext
+        ) -> dict[chess.Move, float]:
+            del scored_context
+            return {
+                move: float(move == preferred)
+                for move in scored_board.legal_moves
+            }
+
+        return rank_position(
+            board,
+            target_color=board.turn,
+            scorer=scorer,
+            context=context,
+            source_id="symmetry",
+            trajectory_id=trajectory,
+        )
+
+    positions = [
+        make_position(white, chess.Move.from_uci("e2e4"), "white"),
+        make_position(black, chess.Move.from_uci("e7e5"), "black"),
+    ]
+    batch = _batch_tensors(
+        positions,
+        torch.arange(2),
+        torch.device("cpu"),
+        2.0,
+        True,
+    )
+
+    for tensor in batch[:4]:
+        assert torch.equal(tensor[0], tensor[1])
+
+
+def test_ranked_training_config_rejects_nonboolean_perspective_flag() -> None:
+    with pytest.raises(TypeError, match="perspective_actions"):
+        RankedTrainingConfig(perspective_actions=1)  # type: ignore[arg-type]

@@ -10,7 +10,13 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from worst_chess.chess.actions import ACTION_SPACE_SIZE, legal_action_mask
+from worst_chess.chess.actions import ACTION_SPACE_SIZE
+from worst_chess.chess.neural_actions import (
+    ABSOLUTE_ACTION_ORIENTATION,
+    PERSPECTIVE_ACTION_ORIENTATION,
+    canonical_to_neural_action_map,
+    neural_legal_action_mask,
+)
 from worst_chess.chess.observations import encode_observation
 from worst_chess.training.model import PolicyValueNetwork, mask_illegal_logits
 from worst_chess.training.ranked_dataset import RankedPosition
@@ -30,6 +36,7 @@ class RankedTrainingConfig:
     value_loss_weight: float = 0.25
     seed: int = 20260721
     device: str = "cpu"
+    perspective_actions: bool = False
 
     def __post_init__(self) -> None:
         if self.epochs < 1 or self.batch_size < 1:
@@ -44,6 +51,8 @@ class RankedTrainingConfig:
             )
         if self.value_loss_weight < 0:
             raise ValueError("value_loss_weight must be nonnegative")
+        if type(self.perspective_actions) is not bool:
+            raise TypeError("perspective_actions must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -81,8 +90,14 @@ def _batch_tensors(
     indices: Tensor,
     device: torch.device,
     rank_temperature: float,
+    perspective_actions: bool,
 ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]:
     selected = [positions[int(index)] for index in indices]
+    orientation = (
+        PERSPECTIVE_ACTION_ORIENTATION
+        if perspective_actions
+        else ABSOLUTE_ACTION_ORIENTATION
+    )
     observations = np.stack(
         [
             encode_observation(position.board(), position.target_color)
@@ -90,7 +105,10 @@ def _batch_tensors(
         ]
     )
     masks = np.stack(
-        [legal_action_mask(position.board()) for position in selected]
+        [
+            neural_legal_action_mask(position.board(), orientation)
+            for position in selected
+        ]
     )
     probabilities = np.zeros(
         (len(selected), ACTION_SPACE_SIZE), dtype=np.float32
@@ -99,6 +117,8 @@ def _batch_tensors(
     values = np.zeros(len(selected), dtype=np.float32)
     value_mask = np.zeros(len(selected), dtype=np.bool_)
     for row, position in enumerate(selected):
+        board = position.board()
+        action_map = canonical_to_neural_action_map(board, orientation)
         weights = np.asarray(
             [
                 math.exp(-(target.rank - 1) / rank_temperature)
@@ -110,8 +130,9 @@ def _batch_tensors(
         for target, probability in zip(
             position.move_targets, weights, strict=True
         ):
-            probabilities[row, target.action] = probability
-            ranks[row, target.action] = target.rank
+            neural_action = action_map[target.action]
+            probabilities[row, neural_action] = probability
+            ranks[row, neural_action] = target.rank
         if position.value_target is not None:
             values[row] = position.value_target
             value_mask[row] = True
@@ -185,6 +206,7 @@ def evaluate_ranked(
     rank_temperature: float = 2.0,
     value_loss_weight: float = 0.25,
     device: str = "cpu",
+    perspective_actions: bool = False,
 ) -> RankedEvaluation:
     """Evaluate soft rank distillation, rank-one accuracy, and value error."""
 
@@ -192,6 +214,8 @@ def evaluate_ranked(
         raise ValueError("positions must not be empty")
     if batch_size < 1 or rank_temperature <= 0 or value_loss_weight < 0:
         raise ValueError("invalid evaluation hyperparameters")
+    if type(perspective_actions) is not bool:
+        raise TypeError("perspective_actions must be a boolean")
     resolved = _resolve_device(device)
     materialized = list(positions)
     model.to(resolved).eval()
@@ -206,7 +230,11 @@ def evaluate_ranked(
         for start in range(0, len(materialized), batch_size):
             indices = torch.arange(start, min(start + batch_size, len(materialized)))
             batch = _batch_tensors(
-                materialized, indices, resolved, rank_temperature
+                materialized,
+                indices,
+                resolved,
+                rank_temperature,
+                perspective_actions,
             )
             metrics = _loss_and_metrics(
                 model, *batch, value_loss_weight=value_loss_weight
@@ -269,7 +297,11 @@ def train_ranked(
         for start in range(0, len(training), settings.batch_size):
             indices = ordering[start : start + settings.batch_size]
             batch = _batch_tensors(
-                training, indices, device, settings.rank_temperature
+                training,
+                indices,
+                device,
+                settings.rank_temperature,
+                settings.perspective_actions,
             )
             optimizer.zero_grad(set_to_none=True)
             loss = _loss_and_metrics(
@@ -296,6 +328,7 @@ def train_ranked(
                 rank_temperature=settings.rank_temperature,
                 value_loss_weight=settings.value_loss_weight,
                 device=str(device),
+                perspective_actions=settings.perspective_actions,
             )
         elapsed = time.perf_counter() - epoch_started
         rate = seen / elapsed

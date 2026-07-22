@@ -8,7 +8,11 @@ import chess.engine
 import pytest
 
 from worst_chess.agents.base import AgentError, MoveContext
-from worst_chess.agents.stockfish import ReverseStockfishAgent, StockfishAgent
+from worst_chess.agents.stockfish import (
+    LimitedStrengthStockfishAgent,
+    ReverseStockfishAgent,
+    StockfishAgent,
+)
 
 
 class FakeEngine:
@@ -177,6 +181,44 @@ def test_conventional_stockfish_agent_uses_engine_play(
     assert fake.played_games == ["stockfish"]
     assert agent.name == "stockfish_nodes_50"
     agent.close()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ({"elo": 1320}, {"UCI_LimitStrength": True, "UCI_Elo": 1320}),
+        ({"skill_level": 0}, {"Skill Level": 0}),
+    ],
+)
+def test_limited_strength_stockfish_configures_weak_play(
+    monkeypatch: pytest.MonkeyPatch,
+    arguments: dict[str, int],
+    expected: dict[str, object],
+) -> None:
+    fake = FakeEngine(lambda move: 0)
+    monkeypatch.setattr(chess.engine.SimpleEngine, "popen_uci", lambda executable: fake)
+    agent = LimitedStrengthStockfishAgent("fake-stockfish", nodes=50, **arguments)
+
+    move = agent.select_move(chess.Board(), _context())
+
+    assert move in chess.Board().legal_moves
+    assert fake.configured == {"Threads": 1, "Hash": 16, **expected}
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {},
+        {"elo": 1320, "skill_level": 0},
+        {"elo": 1000},
+        {"skill_level": 21},
+    ],
+)
+def test_limited_strength_stockfish_rejects_invalid_strength(
+    arguments: dict[str, int],
+) -> None:
+    with pytest.raises(ValueError):
+        LimitedStrengthStockfishAgent("stockfish", **arguments)
 
 
 @pytest.mark.parametrize(

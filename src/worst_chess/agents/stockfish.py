@@ -52,6 +52,7 @@ class ReverseStockfishAgent:
         threads: int = 1,
         hash_mb: int = 16,
         wdl_model: chess.engine.WdlModel = "sf",
+        uci_options: Mapping[str, str | int | None] | None = None,
     ) -> None:
         if nodes is not None and depth is not None:
             raise ValueError("configure exactly one of nodes or depth")
@@ -70,6 +71,7 @@ class ReverseStockfishAgent:
         self.threads = threads
         self.hash_mb = hash_mb
         self.wdl_model = wdl_model
+        self.uci_options = dict(uci_options or {})
         self._engine: chess.engine.SimpleEngine | None = None
         self._closed = False
 
@@ -199,7 +201,13 @@ class ReverseStockfishAgent:
                 f"{self.executable!r}; install Stockfish and provide an executable path"
             ) from exc
         try:
-            engine.configure({"Threads": self.threads, "Hash": self.hash_mb})
+            engine.configure(
+                {
+                    "Threads": self.threads,
+                    "Hash": self.hash_mb,
+                    **self.uci_options,
+                }
+            )
         except (chess.engine.EngineError, OSError) as exc:
             with suppress(chess.engine.EngineError, OSError):
                 engine.quit()
@@ -256,4 +264,57 @@ class StockfishAgent(ReverseStockfishAgent):
         return result.move
 
 
-__all__ = ["ReverseMoveScore", "ReverseStockfishAgent", "StockfishAgent"]
+class LimitedStrengthStockfishAgent(StockfishAgent):
+    """Stockfish configured to intentionally choose weaker ordinary moves."""
+
+    def __init__(
+        self,
+        executable: str | Path,
+        *,
+        elo: int | None = None,
+        skill_level: int | None = None,
+        nodes: int | None = 1_000,
+        depth: int | None = None,
+        threads: int = 1,
+        hash_mb: int = 16,
+    ) -> None:
+        if (elo is None) == (skill_level is None):
+            raise ValueError("configure exactly one of elo or skill_level")
+        if elo is not None:
+            if not 1320 <= elo <= 3190:
+                raise ValueError("elo must be in Stockfish's [1320, 3190] range")
+            options: dict[str, str | int | None] = {
+                "UCI_LimitStrength": True,
+                "UCI_Elo": elo,
+            }
+            label = f"elo_{elo}"
+        else:
+            assert skill_level is not None
+            if not 0 <= skill_level <= 20:
+                raise ValueError("skill_level must be in [0, 20]")
+            options = {"Skill Level": skill_level}
+            label = f"skill_{skill_level}"
+        self.strength_label = label
+        super().__init__(
+            executable,
+            nodes=nodes,
+            depth=depth,
+            threads=threads,
+            hash_mb=hash_mb,
+            uci_options=options,
+        )
+
+    @property
+    def name(self) -> str:
+        budget = (
+            f"nodes_{self.nodes}" if self.nodes is not None else f"depth_{self.depth}"
+        )
+        return f"stockfish_{self.strength_label}_{budget}"
+
+
+__all__ = [
+    "LimitedStrengthStockfishAgent",
+    "ReverseMoveScore",
+    "ReverseStockfishAgent",
+    "StockfishAgent",
+]

@@ -9,7 +9,13 @@ import chess
 import torch
 
 from worst_chess.agents.base import AgentError, MoveContext
-from worst_chess.chess.actions import decode_action, legal_action_mask
+from worst_chess.chess.neural_actions import (
+    ABSOLUTE_ACTION_ORIENTATION,
+    ACTION_ORIENTATION_METADATA_KEY,
+    decode_neural_action,
+    neural_legal_action_mask,
+    validate_action_orientation,
+)
 from worst_chess.chess.observations import encode_observation
 from worst_chess.training.model import (
     PolicyValueNetwork,
@@ -20,7 +26,7 @@ from worst_chess.training.model import (
 
 @dataclass(frozen=True, slots=True)
 class PolicyMove:
-    """One legal move and its unnormalized neural policy logit."""
+    """One legal move, model-coordinate action, and unnormalized logit."""
 
     move: chess.Move
     action: int
@@ -36,11 +42,18 @@ class NeuralAgent:
         *,
         device: str | torch.device = "cpu",
         agent_name: str = "neural",
+        action_orientation: str = ABSOLUTE_ACTION_ORIENTATION,
     ) -> None:
         self.device = _resolve_device(device)
         self.model = model.to(self.device)
         self.model.eval()
         self._name = agent_name
+        try:
+            self.action_orientation = validate_action_orientation(
+                action_orientation
+            )
+        except ValueError as error:
+            raise AgentError(str(error)) from error
 
     @classmethod
     def from_checkpoint(
@@ -51,8 +64,21 @@ class NeuralAgent:
         agent_name: str = "neural",
     ) -> NeuralAgent:
         resolved = _resolve_device(device)
-        model, _ = load_checkpoint(path, device=resolved)
-        return cls(model, device=resolved, agent_name=agent_name)
+        model, metadata = load_checkpoint(path, device=resolved)
+        orientation = metadata.get(
+            ACTION_ORIENTATION_METADATA_KEY,
+            ABSOLUTE_ACTION_ORIENTATION,
+        )
+        if not isinstance(orientation, str):
+            raise AgentError(
+                f"checkpoint {ACTION_ORIENTATION_METADATA_KEY} must be a string"
+            )
+        return cls(
+            model,
+            device=resolved,
+            agent_name=agent_name,
+            action_orientation=orientation,
+        )
 
     @property
     def name(self) -> str:
@@ -68,7 +94,7 @@ class NeuralAgent:
         *,
         top_k: int | None = None,
     ) -> tuple[PolicyMove, ...]:
-        """Rank legal moves by policy logit with stable action-index ties."""
+        """Rank legal moves by logit with stable model-action-index ties."""
 
         if not any(board.legal_moves):
             raise AgentError("NeuralAgent cannot move from a terminal position")
@@ -82,7 +108,9 @@ class NeuralAgent:
 
         observation = encode_observation(board, context.target_color)
         observation_tensor = torch.from_numpy(observation).unsqueeze(0).to(self.device)
-        mask = torch.from_numpy(legal_action_mask(board)).to(self.device)
+        mask = torch.from_numpy(
+            neural_legal_action_mask(board, self.action_orientation)
+        ).to(self.device)
 
         self.model.eval()
         with torch.no_grad():
@@ -95,7 +123,7 @@ class NeuralAgent:
         )[:count]
         ranked: list[PolicyMove] = []
         for action in ranked_actions:
-            move = decode_action(board, action)
+            move = decode_neural_action(board, action, self.action_orientation)
             if move not in board.legal_moves:  # Defensive boundary assertion.
                 raise AgentError(f"neural policy decoded illegal move {move.uci()}")
             ranked.append(

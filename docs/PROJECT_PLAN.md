@@ -1,6 +1,6 @@
 # Worst Chess Ever: research and implementation plan
 
-Status: Phases 0-2 implemented; ranked policy/value v0.2 evaluated  
+Status: Phases 0-2 implemented; weak-opponent v0.3 candidate evaluated
 Last updated: 2026-07-21
 
 ## 1. Objective
@@ -25,7 +25,11 @@ baseline and neural agents, Stockfish integration, deterministic hard-label and
 all-legal-move ranked datasets, joint policy/value training, paired evaluation,
 a resistant opponent, policy-guided reverse search, tests, CI, and a playable
 UCI package. Three v0.2 seeds and an independent population suite have been
-evaluated; generated datasets and checkpoints remain local artifacts.
+evaluated; generated datasets and checkpoints remain local artifacts. The v0.3
+work adds limited-strength and handcrafted weak opponents, deterministic noisy
+and regime-switching portfolios, a random-reply teacher/search policy,
+backward-compatible perspective-aligned neural actions, and late-game
+stalemate avoidance. See `reports/V03_WEAK_OPPONENTS_2026-07-21.md`.
 
 ## 3. Formal game definition
 
