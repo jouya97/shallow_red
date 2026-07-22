@@ -4,13 +4,13 @@ import test from "node:test";
 
 const templateRoot = new URL("../", import.meta.url);
 
-async function render() {
+async function render(pathname = "/") {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
 
   return worker.fetch(
-    new Request("http://localhost/", {
+    new Request(`http://localhost${pathname}`, {
       headers: { accept: "text/html" },
     }),
     { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
@@ -31,10 +31,25 @@ test("server-renders the Shallow Red game shell", async () => {
   assert.match(html, /Choose your color/);
   assert.match(html, />Black</);
   assert.match(html, /as quickly as possible/);
+  assert.match(html, /href="\/technical"/);
+  assert.match(html, /Shallow Red(?:&apos;|&#x27;|')s record/);
   assert.match(html, />Losses</);
   assert.match(html, />Wins</);
+  assert.doesNotMatch(html, /Shallow Red losses|Shallow Red wins/i);
   assert.doesNotMatch(html, /Accidental AI wins|>Draws|Last search|research evaluations|How this scales|server bill|moves computed locally/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/);
+});
+
+test("server-renders the technical page and model credit", async () => {
+  const response = await render("/technical");
+  assert.equal(response.status, 200);
+
+  const html = await response.text();
+  assert.match(html, /The Technical Stuff/);
+  assert.match(html, /What does .*losing.* mean/);
+  assert.match(html, /281 of 300/);
+  assert.match(html, /gpt-5\.6-sol-high/);
+  assert.match(html, /Back to the game/);
 });
 
 test("removes the disposable starter preview and fixes board rows", async () => {

@@ -1,14 +1,10 @@
 import { ShallowRedGame } from "./ShallowRedGame";
+import { SiteHeader } from "./SiteHeader";
 
 export default function Home() {
   return (
     <main>
-      <header className="site-header">
-        <a href="#top" className="wordmark" aria-label="Shallow Red home">
-          <span className="mark">SR</span>
-          <span>Shallow Red</span>
-        </a>
-      </header>
+      <SiteHeader current="play" />
 
       <section className="hero" id="top">
         <div className="hero-copy">

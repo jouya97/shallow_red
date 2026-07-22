@@ -179,7 +179,8 @@ export function ShallowRedGame() {
   }
 
   return (
-    <section className="game-shell" aria-label="Play Shallow Red">
+    <>
+      <section className="game-shell" aria-label="Play Shallow Red">
       <div className="board-wrap">
         <div className="board" role="grid" aria-label={`Chess board, ${colorName(humanColor)} perspective`}>
           {displayRanks.flatMap((rank, rankIndex) =>
@@ -249,11 +250,6 @@ export function ShallowRedGame() {
           <p>Shallow Red plays {colorName(engineColor)} and wants you to checkmate it. Normal chess rules apply.</p>
         </div>
 
-        <div className="telemetry">
-          <div><span>Losses</span><strong>{stats?.losses ?? "—"}</strong></div>
-          <div><span>Wins</span><strong>{stats?.wins ?? "—"}</strong></div>
-        </div>
-
         <div className="move-log">
           <div className="move-log-heading">
             <p className="eyebrow">Moves</p>
@@ -265,8 +261,20 @@ export function ShallowRedGame() {
             ))}
           </div>
         </div>
-      </aside>
-    </section>
+        </aside>
+      </section>
+
+      <section className="record-section" aria-labelledby="record-heading">
+        <div className="record-copy">
+          <p className="eyebrow">All-time record</p>
+          <h2 id="record-heading">Shallow Red&apos;s record</h2>
+        </div>
+        <div className="record-totals">
+          <div><span>Losses</span><strong>{stats?.losses ?? "—"}</strong></div>
+          <div><span>Wins</span><strong>{stats?.wins ?? "—"}</strong></div>
+        </div>
+      </section>
+    </>
   );
 }
 
