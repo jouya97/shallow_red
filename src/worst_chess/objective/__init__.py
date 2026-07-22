@@ -1,0 +1,2 @@
+"""The designated-loser objective."""
+
