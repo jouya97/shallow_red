@@ -105,8 +105,7 @@ size, architecture, action layout, and orientation before inference.
 The site integration uses the neural policy only to shortlist twelve legal
 moves. The existing tactical reply scorer chooses among those moves, preserving
 its immediate checkmate, draw, and stalemate safeguards. A load or inference
-failure automatically falls back to the original all-moves heuristic, and the
-game panel reports which mode is active.
+failure automatically falls back to the original all-moves heuristic.
 
 ## Gameplay
 

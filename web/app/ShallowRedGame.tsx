@@ -26,7 +26,6 @@ const PIECES = {
 } as const;
 
 type Outcome = "loss" | "win" | "draw";
-type ModelStatus = "loading" | "ready" | "fallback";
 type GlobalStats = {
   losses: number;
   wins: number;
@@ -44,7 +43,6 @@ export function ShallowRedGame() {
   const [humanColor, setHumanColor] = useState<Side>("w");
   const [selected, setSelected] = useState<Square | null>(null);
   const [thinking, setThinking] = useState(false);
-  const [modelStatus, setModelStatus] = useState<ModelStatus>("loading");
   const [stats, setStats] = useState<GlobalStats | null>(null);
 
   useEffect(() => () => {
@@ -61,9 +59,8 @@ export function ShallowRedGame() {
         const policy = decodeTinyPolicy(await response.arrayBuffer());
         if (!active) return;
         tinyPolicy.current = policy;
-        setModelStatus("ready");
       } catch {
-        if (active) setModelStatus("fallback");
+        if (active) tinyPolicy.current = null;
       }
     }
 
@@ -156,7 +153,6 @@ export function ShallowRedGame() {
           : chooseLosingMove(activeGame, activeEngineColor);
       } catch {
         tinyPolicy.current = null;
-        setModelStatus("fallback");
         nextDecision = chooseLosingMove(activeGame, activeEngineColor);
       }
       activeGame.move(nextDecision.move);
@@ -330,13 +326,6 @@ export function ShallowRedGame() {
           <p className="eyebrow">Your assignment</p>
           <p className="big-rule">Play {colorName(humanColor)}. Try to lose.</p>
           <p>Shallow Red plays {colorName(engineColor)} and wants you to checkmate it. Normal chess rules apply.</p>
-          <p className={`model-mode ${modelStatus}`} aria-live="polite">
-            {modelStatus === "ready"
-              ? "Tiny neural model active · 24×3 int8 policy"
-              : modelStatus === "loading"
-                ? "Loading tiny neural model…"
-                : "Neural model unavailable · safe heuristic active"}
-          </p>
         </div>
 
         <div className="move-log">
