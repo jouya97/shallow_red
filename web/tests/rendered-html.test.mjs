@@ -37,12 +37,13 @@ test("server-renders the Shallow Red game shell", async () => {
   assert.match(html, />Wins</);
   assert.match(html, />Draws</);
   assert.match(html, />Total games</);
+  assert.doesNotMatch(html, /tiny neural model|24×3 int8 policy/i);
   assert.doesNotMatch(html, /Shallow Red losses|Shallow Red wins/i);
   assert.doesNotMatch(html, /Accidental AI wins|Last search|research evaluations|How this scales|server bill|moves computed locally/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/);
 });
 
-test("server-renders the technical page and model credit", async () => {
+test("server-renders the technical page and hybrid-engine details", async () => {
   const response = await render("/technical");
   assert.equal(response.status, 200);
 
@@ -50,7 +51,17 @@ test("server-renders the technical page and model credit", async () => {
   assert.match(html, /The Technical Stuff/);
   assert.match(html, /By <strong>Jian Ouyang<\/strong>/);
   assert.match(html, /What does .*losing.* mean/);
+  assert.match(html, /The policy is not the engine/);
+  assert.match(html, /21 planes of 8 × 8 values/);
+  assert.match(html, /4,672 logits/);
+  assert.match(html, /82,473/);
+  assert.match(html, /37,633/);
+  assert.match(html, /twelve highest-ranked legal moves/);
   assert.match(html, /281 of 300/);
+  assert.match(html, /474 of 500/);
+  assert.match(html, /39\.7 KB/);
+  assert.match(html, /exact production TypeScript path/);
+  assert.match(html, /50-move rules/);
   assert.match(html, /gpt-5\.6-sol-high/);
   assert.match(html, /Back to the game/);
 });
@@ -68,6 +79,7 @@ test("removes the disposable starter preview and fixes board rows", async () => 
   assert.match(layout, /Shallow Red — You Can't Lose/);
   assert.match(packageJson, /"chess\.js"/);
   assert.match(styles, /grid-template-rows: repeat\(8, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /animation: pulse 1\.6s ease-in-out infinite alternate/);
   assert.match(styles, /white-space: nowrap/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview", templateRoot)));

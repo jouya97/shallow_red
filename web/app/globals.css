@@ -335,7 +335,7 @@ main {
 }
 
 .status-dot.thinking {
-  animation: pulse 0.8s ease-in-out infinite alternate;
+  animation: pulse 1.6s ease-in-out infinite alternate;
 }
 
 .status-card h2 {
@@ -654,6 +654,83 @@ main {
   text-transform: uppercase;
 }
 
+.technical-table-wrap {
+  margin: 34px 0 38px;
+  overflow-x: auto;
+}
+
+.technical-table {
+  border-collapse: collapse;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  min-width: 620px;
+  width: 100%;
+}
+
+.technical-table th,
+.technical-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 15px 18px 15px 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.technical-table th {
+  color: var(--red);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.technical-formula {
+  background: var(--ink);
+  color: white;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: clamp(12px, 1.7vw, 15px);
+  line-height: 1.75;
+  margin: 34px 0 38px;
+  overflow-x: auto;
+  padding: 24px;
+}
+
+.technical-flow {
+  counter-reset: none;
+  display: grid;
+  gap: 0;
+  list-style: none;
+  margin: 36px 0 42px;
+  padding: 0;
+}
+
+.technical-flow li {
+  align-items: baseline;
+  border-top: 1px solid rgb(255 255 255 / 35%);
+  display: grid;
+  gap: 22px;
+  grid-template-columns: 38px 1fr;
+  padding: 15px 0;
+}
+
+.technical-flow li:last-child {
+  border-bottom: 1px solid rgb(255 255 255 / 35%);
+}
+
+.technical-flow span {
+  color: var(--acid);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.technical-note {
+  border-left: 4px solid var(--red);
+  font-size: clamp(15px, 1.8vw, 18px);
+  line-height: 1.6;
+  margin-top: 34px;
+  padding: 4px 0 4px 22px;
+}
+
 .technical-principle {
   background: var(--ink);
   color: white;
@@ -789,6 +866,17 @@ footer {
 
   .technical-stats div:nth-child(3) {
     border-left: 0;
+  }
+
+  .technical-table {
+    min-width: 540px;
+  }
+
+  .technical-formula {
+    margin-left: -18px;
+    margin-right: -18px;
+    padding-left: 18px;
+    padding-right: 18px;
   }
 
   .technical-principle {

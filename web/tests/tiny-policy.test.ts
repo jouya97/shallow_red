@@ -4,6 +4,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Chess } from "chess.js";
 import {
+  chooseTinyPolicyMove,
+  TINY_POLICY_SHORTLIST,
+} from "../lib/tiny-engine";
+import {
   decodeTinyPolicy,
   encodeTinyPolicyMove,
   encodeTinyPolicyObservation,
@@ -107,6 +111,25 @@ test("matches quantized PyTorch logits and legal top-12 rankings", async () => {
       fixture.name,
     );
   }
+});
+
+test("uses the neural shortlist for the tactical browser scorer", async () => {
+  const bytes = await readFile(modelUrl);
+  const buffer = bytes.buffer.slice(
+    bytes.byteOffset,
+    bytes.byteOffset + bytes.byteLength,
+  );
+  const policy = decodeTinyPolicy(buffer);
+  const game = new Chess();
+  game.move("e4");
+  const original = game.fen();
+
+  const decision = chooseTinyPolicyMove(game, policy, "b");
+
+  assert.equal(game.fen(), original);
+  assert.ok(decision.candidates > 0);
+  assert.ok(decision.candidates <= TINY_POLICY_SHORTLIST);
+  assert.doesNotThrow(() => new Chess(original).move(decision.move));
 });
 
 test("rejects corrupt policy payloads", () => {
