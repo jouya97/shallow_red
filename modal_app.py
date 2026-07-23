@@ -107,6 +107,11 @@ retro_expand_image = base_image.add_local_file(
     "/root/expand_selfmate_ancestors.py",
     copy=True,
 )
+proof_ranked_image = ml_image.add_local_file(
+    PROJECT_ROOT / "scripts" / "build_proof_ranked_dataset.py",
+    "/root/build_proof_ranked_dataset.py",
+    copy=True,
+)
 
 
 @app.function(image=base_image, cpu=1.0, memory=512, timeout=300)
@@ -150,6 +155,19 @@ def _run_cli(arguments: list[str]) -> int:
 )
 def run_cpu(arguments: list[str]) -> int:
     """Run a CPU-heavy rollout or evaluation command."""
+
+    return _run_cli(arguments)
+
+
+@app.function(
+    image=ml_image,
+    cpu=1.0,
+    memory=2_048,
+    timeout=2 * 60 * 60,
+    volumes={ARTIFACTS_MOUNT: artifacts},
+)
+def run_game_cpu(arguments: list[str]) -> int:
+    """Run an independently shardable neural gameplay batch."""
 
     return _run_cli(arguments)
 
@@ -218,6 +236,29 @@ def run_retro_expand(arguments: list[str]) -> int:
 
     completed = subprocess.run(
         [sys.executable, "/root/expand_selfmate_ancestors.py", *arguments],
+        cwd=ARTIFACTS_MOUNT,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        check=False,
+    )
+    artifacts.commit()
+    if completed.returncode != 0:
+        raise subprocess.CalledProcessError(completed.returncode, completed.args)
+    return completed.returncode
+
+
+@app.function(
+    image=proof_ranked_image,
+    cpu=1.0,
+    memory=2_048,
+    timeout=6 * 60 * 60,
+    volumes={ARTIFACTS_MOUNT: artifacts},
+)
+def run_proof_ranked(arguments: list[str]) -> int:
+    """Build all-legal-move ranked labels from proven selfmates."""
+
+    completed = subprocess.run(
+        [sys.executable, "/root/build_proof_ranked_dataset.py", *arguments],
         cwd=ARTIFACTS_MOUNT,
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -449,6 +490,228 @@ def main(mode: str = "smoke", command: str = "") -> None:
         if failures:
             raise RuntimeError(f"{len(failures)} v2 retro-expansion shards failed")
         return
+    if mode == "proof-ranked":
+        total_positions = 138
+        shard_size = 10
+        label_commands = [
+            [
+                "--proof-report",
+                "/artifacts/evaluations/yacpdb-retro-modal/merged-report.json",
+                "--start",
+                str(start),
+                "--count",
+                str(min(shard_size, total_positions - start)),
+                "--node-budget",
+                "100000",
+                "--output",
+                f"/artifacts/datasets/proof-ranked-shard-{start:03d}.jsonl",
+                "--report",
+                f"/artifacts/evaluations/proof-ranked-shard-{start:03d}/report.json",
+            ]
+            for start in range(0, total_positions, shard_size)
+        ]
+        results = list(
+            run_proof_ranked.map(
+                label_commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} proof-ranked shards failed")
+        return
+    if mode == "proof-finetune":
+        base_train = "/artifacts/datasets/finetune-splits/base-train.jsonl"
+        proof_train = "/artifacts/datasets/finetune-splits/proof-train.jsonl"
+        initialization = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        commands: list[list[str]] = []
+        for proof_weight in (1, 4, 8):
+            commands.append(
+                [
+                    "train-ranked",
+                    "--dataset",
+                    base_train,
+                    *([proof_train] * proof_weight),
+                    "--validation-dataset",
+                    "/artifacts/datasets/finetune-splits/base-validation.jsonl",
+                    "/artifacts/datasets/finetune-splits/proof-validation.jsonl",
+                    "--test-dataset",
+                    "/artifacts/datasets/finetune-splits/base-test.jsonl",
+                    "/artifacts/datasets/finetune-splits/proof-test.jsonl",
+                    "--initialize-from",
+                    initialization,
+                    "--checkpoint",
+                    (
+                        "/artifacts/checkpoints/"
+                        f"ranked-v06-proof-w{proof_weight}-seed-20264021.pt"
+                    ),
+                    "--epochs",
+                    "5",
+                    "--batch-size",
+                    "128",
+                    "--learning-rate",
+                    "0.0001",
+                    "--rank-temperature",
+                    "2",
+                    "--value-loss-weight",
+                    "0",
+                    "--seed",
+                    "20264021",
+                    "--device",
+                    "cuda",
+                    "--channels",
+                    "32",
+                    "--residual-blocks",
+                    "4",
+                    "--perspective-actions",
+                ]
+            )
+        results = list(
+            run_gpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} proof-finetune jobs failed")
+        return
+    if mode == "proof-finetune-sharp":
+        base_train = "/artifacts/datasets/finetune-splits/base-train.jsonl"
+        proof_train = "/artifacts/datasets/finetune-splits/proof-train.jsonl"
+        initialization = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        commands = []
+        for proof_weight in (4, 8):
+            commands.append(
+                [
+                    "train-ranked",
+                    "--dataset",
+                    base_train,
+                    *([proof_train] * proof_weight),
+                    "--validation-dataset",
+                    "/artifacts/datasets/finetune-splits/base-validation.jsonl",
+                    "/artifacts/datasets/finetune-splits/proof-validation.jsonl",
+                    "--test-dataset",
+                    "/artifacts/datasets/finetune-splits/base-test.jsonl",
+                    "/artifacts/datasets/finetune-splits/proof-test.jsonl",
+                    "--initialize-from",
+                    initialization,
+                    "--checkpoint",
+                    (
+                        "/artifacts/checkpoints/"
+                        f"ranked-v06s-proof-w{proof_weight}-seed-20264022.pt"
+                    ),
+                    "--epochs",
+                    "10",
+                    "--batch-size",
+                    "128",
+                    "--learning-rate",
+                    "0.0001",
+                    "--rank-temperature",
+                    "0.25",
+                    "--value-loss-weight",
+                    "0",
+                    "--seed",
+                    "20264022",
+                    "--device",
+                    "cuda",
+                    "--channels",
+                    "32",
+                    "--residual-blocks",
+                    "4",
+                    "--perspective-actions",
+                ]
+            )
+        results = list(
+            run_gpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} sharp fine-tune jobs failed")
+        return
+    if mode == "proof-finetune-safety":
+        checkpoint = (
+            "/artifacts/checkpoints/"
+            "ranked-v06s-proof-w8-seed-20264022.pt"
+        )
+        commands = [
+            [
+                "smoke",
+                "--target",
+                "stalemate-aware",
+                "--opponent",
+                "random",
+                "--checkpoint",
+                checkpoint,
+                "--device",
+                "cpu",
+                "--search-top-k",
+                "12",
+                "--pairs",
+                "100",
+                "--openings",
+                "100",
+                "--opening-plies",
+                "6",
+                "--max-plies",
+                "600",
+                "--seed",
+                "20261221",
+                "--output",
+                "/artifacts/evaluations/proof-v06s-w8-random-200",
+            ],
+            *[
+                [
+                    "smoke",
+                    "--target",
+                    "stalemate-aware",
+                    "--opponent",
+                    opponent,
+                    "--checkpoint",
+                    checkpoint,
+                    "--device",
+                    "cpu",
+                    "--search-top-k",
+                    "12",
+                    "--pairs",
+                    "10",
+                    "--openings",
+                    "10",
+                    "--opening-plies",
+                    "6",
+                    "--max-plies",
+                    "300",
+                    "--seed",
+                    "20263021",
+                    "--output",
+                    f"/artifacts/evaluations/proof-v06s-w8-{opponent}-20",
+                ]
+                for opponent in ("selfish-random-reply", "selfish-portfolio")
+            ],
+        ]
+        results = list(
+            run_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} proof safety jobs failed")
+        return
     if mode == "selfish-pilot":
         checkpoint = (
             "/artifacts/checkpoints/"
@@ -493,6 +756,208 @@ def main(mode: str = "smoke", command: str = "") -> None:
         if failures:
             raise RuntimeError(f"{len(failures)} selfish-pilot jobs failed")
         return
+    if mode == "synthetic-loser-league":
+        checkpoint = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        total_pairs = 50
+        shard_pairs = 5
+        commands = [
+            [
+                "smoke",
+                "--target",
+                "stalemate-aware",
+                "--opponent",
+                "synthetic-loser-league",
+                "--checkpoint",
+                checkpoint,
+                "--device",
+                "cpu",
+                "--search-top-k",
+                "12",
+                "--pairs",
+                str(shard_pairs),
+                "--openings",
+                "1",
+                "--opening-plies",
+                "0",
+                "--max-plies",
+                "600",
+                "--seed",
+                str(20265020 + pair_start),
+                "--output",
+                f"/artifacts/evaluations/synthetic-league-shard-{pair_start:03d}",
+            ]
+            for pair_start in range(0, total_pairs, shard_pairs)
+        ]
+        results = list(
+            run_game_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} synthetic league jobs failed")
+        return
+    if mode == "synthetic-loser-exploration":
+        checkpoint = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        commands = [
+            [
+                "smoke",
+                "--target",
+                "stalemate-aware",
+                "--target-exploration",
+                "0.20",
+                "--opponent",
+                "synthetic-loser-league",
+                "--checkpoint",
+                checkpoint,
+                "--device",
+                "cpu",
+                "--search-top-k",
+                "12",
+                "--pairs",
+                "5",
+                "--openings",
+                "1",
+                "--opening-plies",
+                "0",
+                "--max-plies",
+                "600",
+                "--seed",
+                str(20265100 + pair_start),
+                "--output",
+                (
+                    "/artifacts/evaluations/"
+                    f"synthetic-exploration-shard-{pair_start:03d}"
+                ),
+            ]
+            for pair_start in range(0, 25, 5)
+        ]
+        results = list(
+            run_game_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(
+                f"{len(failures)} synthetic exploration jobs failed"
+            )
+        return
+    if mode == "synthetic-exploration-sweep":
+        checkpoint = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        commands = [
+            [
+                "smoke",
+                "--target",
+                "stalemate-aware",
+                "--target-exploration",
+                str(probability),
+                "--opponent",
+                "synthetic-loser-league",
+                "--checkpoint",
+                checkpoint,
+                "--device",
+                "cpu",
+                "--search-top-k",
+                "12",
+                "--pairs",
+                "5",
+                "--openings",
+                "1",
+                "--opening-plies",
+                "0",
+                "--max-plies",
+                "600",
+                "--seed",
+                str(20265200 + probability_index * 100 + shard),
+                "--output",
+                (
+                    "/artifacts/evaluations/"
+                    f"synthetic-sweep-p{probability_index:02d}-shard-{shard:03d}"
+                ),
+            ]
+            for probability_index, probability in enumerate((0.10, 0.35, 0.50))
+            for shard in (0, 5)
+        ]
+        results = list(
+            run_game_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(
+                f"{len(failures)} synthetic sweep jobs failed"
+            )
+        return
+    if mode == "synthetic-exploration-scale":
+        checkpoint = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        total_pairs = 100
+        shard_pairs = 5
+        commands = [
+            [
+                "smoke",
+                "--target",
+                "stalemate-aware",
+                "--target-exploration",
+                "0.20",
+                "--opponent",
+                "synthetic-loser-league",
+                "--checkpoint",
+                checkpoint,
+                "--device",
+                "cpu",
+                "--search-top-k",
+                "12",
+                "--pairs",
+                str(shard_pairs),
+                "--openings",
+                "1",
+                "--opening-plies",
+                "0",
+                "--max-plies",
+                "600",
+                "--seed",
+                str(20266000 + pair_start),
+                "--output",
+                (
+                    "/artifacts/evaluations/"
+                    f"synthetic-scale-shard-{pair_start:03d}"
+                ),
+            ]
+            for pair_start in range(0, total_pairs, shard_pairs)
+        ]
+        results = list(
+            run_game_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(
+                f"{len(failures)} synthetic scale jobs failed"
+            )
+        return
     if mode == "highmem":
         run_highmem.remote(arguments)
         return
@@ -507,6 +972,9 @@ def main(mode: str = "smoke", command: str = "") -> None:
         return
     raise ValueError(
         "mode must be one of: smoke, cpu, web-eval, web-frozen, proof-search, "
-        "proof-candidates, retro-ancestors, retro-ancestors-v2, selfish-pilot, "
-        "highmem, retrograde, four-piece-retrograde, gpu"
+        "proof-candidates, retro-ancestors, retro-ancestors-v2, proof-ranked, "
+        "proof-finetune, proof-finetune-sharp, proof-finetune-safety, "
+        "selfish-pilot, synthetic-loser-league, synthetic-loser-exploration, "
+        "synthetic-exploration-sweep, synthetic-exploration-scale, highmem, "
+        "retrograde, four-piece-retrograde, gpu"
     )

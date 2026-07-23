@@ -29,7 +29,10 @@ def merge_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
     duplicate_fens = sum(count - 1 for count in fen_counts.values() if count > 1)
     statuses = Counter(record["status"] for record in records)
     proven_extended = sum(
-        record["status"] == "proven" and record.get("distance_gain", 0) > 0
+        record["status"] == "proven"
+        and record.get(
+            "distance_gain_verified", record.get("distance_gain", 0) > 0
+        )
         for record in records
     )
     return {

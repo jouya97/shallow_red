@@ -26,6 +26,11 @@ def build_parser() -> argparse.ArgumentParser:
     extract = subparsers.add_parser("extract")
     extract.add_argument("--pgn", type=Path, nargs="+", required=True)
     extract.add_argument("--tail-target-positions", type=int, default=4)
+    extract.add_argument(
+        "--include-non-losses",
+        action="store_true",
+        help="mine reachable tails from draws, wins, and truncations too",
+    )
     extract.add_argument("--output", type=Path, required=True)
 
     search = subparsers.add_parser("search")
@@ -42,6 +47,7 @@ def extract_candidates(
     paths: list[Path],
     *,
     tail_target_positions: int,
+    include_non_losses: bool = False,
 ) -> list[dict[str, Any]]:
     if tail_target_positions < 1:
         raise ValueError("tail_target_positions must be positive")
@@ -62,7 +68,10 @@ def extract_candidates(
                             (board.fen(en_passant="fen"), board.ply())
                         )
                     board.push(move)
-                if not (board.is_checkmate() and board.turn == target_color):
+                observed_target_loss = (
+                    board.is_checkmate() and board.turn == target_color
+                )
+                if not observed_target_loss and not include_non_losses:
                     continue
                 selected = target_positions[-tail_target_positions:]
                 for fen, ply in selected:
@@ -77,7 +86,11 @@ def extract_candidates(
                             "source": path.name,
                             "game_id": game.headers.get("Round", "unknown"),
                             "ply": ply,
-                            "plies_before_observed_mate": board.ply() - ply,
+                            "observed_target_loss": observed_target_loss,
+                            "plies_before_game_end": board.ply() - ply,
+                            "plies_before_observed_mate": (
+                                board.ply() - ply if observed_target_loss else None
+                            ),
                         }
                     )
     return candidates
@@ -171,6 +184,7 @@ def main() -> int:
         candidates = extract_candidates(
             arguments.pgn,
             tail_target_positions=arguments.tail_target_positions,
+            include_non_losses=arguments.include_non_losses,
         )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(

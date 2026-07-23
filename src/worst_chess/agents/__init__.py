@@ -19,6 +19,12 @@ from worst_chess.agents.opponent_model import (
 )
 from worst_chess.agents.policy_search import PolicyGuidedReverseSearchAgent
 from worst_chess.agents.portfolio import RegimeSwitchingOpponentAgent
+from worst_chess.agents.proof_hybrid import (
+    ProofGuidedSelfmateAgent,
+    ProofHybridStats,
+    SelfmateBookEntry,
+    SelfmateProofBook,
+)
 from worst_chess.agents.random import RandomAgent
 from worst_chess.agents.resistant import ResistantOpponentAgent, ResistantWeights
 from worst_chess.agents.rollout_search import NeuralShortlistRolloutAgent
@@ -27,6 +33,10 @@ from worst_chess.agents.stockfish import (
     ReverseMoveScore,
     ReverseStockfishAgent,
     StockfishAgent,
+)
+from worst_chess.agents.synthetic_loser import (
+    ExploringLoserAgent,
+    build_synthetic_loser_league,
 )
 from worst_chess.agents.tablebase import SyzygyLosingAgent, SyzygyMoveScore
 from worst_chess.agents.weak import (
@@ -54,6 +64,8 @@ __all__ = [
     "OpportunisticHybridAgent",
     "PolicyGuidedReverseSearchAgent",
     "PolicyMove",
+    "ProofGuidedSelfmateAgent",
+    "ProofHybridStats",
     "RandomAgent",
     "RandomReplyEvaluation",
     "RandomReplySearchAgent",
@@ -70,6 +82,10 @@ __all__ = [
     "SyzygyLosingAgent",
     "SyzygyMoveScore",
     "SelfishLoserOpponentAgent",
+    "SelfmateBookEntry",
+    "SelfmateProofBook",
     "CaptureFirstOpponentAgent",
+    "ExploringLoserAgent",
     "WebEngineAgent",
+    "build_synthetic_loser_league",
 ]

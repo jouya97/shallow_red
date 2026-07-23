@@ -79,5 +79,12 @@ def test_expansion_reports_separately_when_proof_distance_increases() -> None:
     assert record["max_plies"] == 4
     if record["status"] == "proven":
         assert record["distance_gain"] == record["forced_plies"] - 2
+        if record["distance_gain"] > 0:
+            assert record["lower_horizon_status"] in {
+                "proven",
+                "refuted",
+                "unknown",
+            }
     else:
         assert record["distance_gain"] is None
+        assert record["distance_gain_verified"] is False

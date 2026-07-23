@@ -73,3 +73,27 @@ def test_extract_candidates_keeps_only_tail_positions_from_target_losses(
     assert len(candidates) == 1
     assert candidates[0]["fen"] == SELF_MATE_IN_ONE
     assert candidates[0]["plies_before_observed_mate"] == 2
+    assert candidates[0]["observed_target_loss"] is True
+
+
+def test_extract_candidates_can_include_reachable_non_losses(tmp_path: Path) -> None:
+    board = chess.Board()
+    board.push_uci("e2e4")
+    board.push_uci("e7e5")
+    game = chess.pgn.Game.from_board(board)
+    game.headers["Target"] = "white"
+    game.headers["Round"] = "unfinished"
+    path = tmp_path / "unfinished.pgn"
+    path.write_text(str(game) + "\n", encoding="utf-8")
+
+    default = extract_candidates([path], tail_target_positions=2)
+    included = extract_candidates(
+        [path],
+        tail_target_positions=2,
+        include_non_losses=True,
+    )
+
+    assert default == []
+    assert len(included) == 1
+    assert included[0]["observed_target_loss"] is False
+    assert included[0]["plies_before_observed_mate"] is None

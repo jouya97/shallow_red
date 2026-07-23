@@ -12,7 +12,7 @@ documents the first ranked model. The
 weak/noisy opponent league, perspective-aligned policy actions, random-reply
 training, and stalemate-aware search. The current candidate self-checkmates in
 94% of a fresh 200-game uniform-random suite by 600 plies, with 4% draws, 2%
-unresolved games, and no observed accidental wins. It also remains at 100%
+unresolved games, and no observed wins. It also remains at 100%
 against the tested Stockfish tier. These are population results, not a claim
 that full adversarial selfmate chess is solved.
 The [frozen web-engine evaluation](reports/WEB_ENGINE_EVALUATION_2026-07-22.md)
@@ -34,6 +34,22 @@ The [forced-selfmate and adversarial-population report](reports/FORCED_SELFMATE_
 adds trying-to-lose opponent curricula, bounded s#1-s#4 proof search, a Popeye
 prescreen, and two rejected adversarially trained models. The selected v0.3
 policy remains unchanged.
+The [selfmate corpus and proof-ancestry report](reports/SELFMATE_CORPUS_RETRO_2026-07-22.md)
+imports and independently validates attributed compositions, creates exact
+six-ply ancestors, and builds honest all-move proof labels. The
+[proof fine-tuning report](reports/PROOF_FINETUNE_2026-07-22.md) evaluates two
+fine-tuning objectives and rejects all five candidates for failing to
+generalize to unseen composition families.
+The [dynamic proof-hybrid report](reports/DYNAMIC_PROOF_HYBRID_2026-07-22.md)
+adds a deterministic shortest-selfmate book and bounded live proof search. It
+perfectly executes the known proofs and handles arbitrary replies inside those
+proof regions, but the current regions were never reached in ordinary games,
+so v0.3 remains selected.
+The [synthetic loser-generation report](reports/SYNTHETIC_LOSER_GENERATION_2026-07-22.md)
+builds a diverse anti-repetition opponent league, generates reachable games,
+and discovers two new exact selfmates plus empirical steering moves up to six
+plies earlier. The pipeline is promising, but the current positive yield is too
+small and exploratory wins prevent training or deployment without more work.
 
 ## Development
 
@@ -77,6 +93,12 @@ uv run worst-chess smoke --target stalemate-aware \
   --opponent selfish-portfolio \
   --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
   --search-top-k 12 --pairs 20 --openings 20 --opening-plies 6
+
+# Generate diverse initial-board trajectories with safe target exploration.
+uv run worst-chess smoke --target stalemate-aware \
+  --opponent synthetic-loser-league --target-exploration 0.20 \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --search-top-k 12 --pairs 25 --opening-plies 0 --max-plies 600
 
 # Generate ranked hard-negative states against the same population.
 uv run worst-chess generate-ranked \
@@ -143,7 +165,35 @@ uv run python scripts/popeye_prescreen.py \
   --input artifacts/datasets/forced-selfmate-candidates.jsonl \
   --popeye /path/to/popeye/py --max-moves 4 \
   --output artifacts/evaluations/popeye-prescreen/report.json
+
+# Import attributed orthodox compositions without copying published solutions.
+uv run python scripts/import_yacpdb_selfmates.py \
+  --query 'Stip("s#[1-2]") AND NOT Fairy' --pages 1 \
+  --output artifacts/datasets/yacpdb-selfmates.jsonl
+
+# Back up two quiet legal plies and prove the generated policy move.
+uv run python scripts/expand_selfmate_ancestors.py \
+  --proof-report artifacts/evaluations/yacpdb-proof/report.json \
+  --max-candidates-per-seed 50 --node-budget 100000 \
+  --output artifacts/evaluations/yacpdb-retro/report.json
+
+# Score every legal move as proven, unknown, or refuted; mirror labels for Black.
+uv run python scripts/build_proof_ranked_dataset.py \
+  --proof-report artifacts/evaluations/yacpdb-retro/report.json \
+  --output artifacts/datasets/proof-ranked.jsonl \
+  --report artifacts/evaluations/proof-ranked/report.json
+
+# Opt into exact book moves and bounded dynamic proof search during evaluation.
+uv run worst-chess smoke --target neural --opponent random \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --proof-report artifacts/evaluations/yacpdb-retro-modal/merged-report.json \
+  --selfmate-search-plies 4 --selfmate-search-nodes 10000 \
+  --pairs 5 --max-plies 200
 ```
+
+The importer is intended for attributed research samples under `artifacts/`.
+YACPDB does not currently advertise a bulk-content license, so do not vendor or
+redistribute a database dump without clarifying permission.
 
 ## Modal
 

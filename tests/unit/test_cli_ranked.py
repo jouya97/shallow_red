@@ -95,6 +95,28 @@ def test_train_ranked_cli_exposes_optional_perspective_actions() -> None:
     assert arguments.perspective_actions is True
 
 
+def test_train_ranked_cli_exposes_finetune_and_fixed_splits() -> None:
+    arguments = cli.build_parser().parse_args(
+        [
+            "train-ranked",
+            "--dataset",
+            "train.jsonl",
+            "--validation-dataset",
+            "validation.jsonl",
+            "--test-dataset",
+            "test.jsonl",
+            "--initialize-from",
+            "base.pt",
+            "--checkpoint",
+            "candidate.pt",
+        ]
+    )
+
+    assert arguments.validation_dataset == [Path("validation.jsonl")]
+    assert arguments.test_dataset == [Path("test.jsonl")]
+    assert arguments.initialize_from == Path("base.pt")
+
+
 def test_rerank_rollouts_cli_exposes_required_controls() -> None:
     arguments = cli.build_parser().parse_args(
         [
@@ -115,6 +137,8 @@ def test_rerank_rollouts_cli_exposes_required_controls() -> None:
             "stalemate-aware",
             "--target-top-k",
             "6",
+            "--rollout-opponent",
+            "synthetic-loser-league",
             "--seed",
             "99",
             "--device",
@@ -129,6 +153,7 @@ def test_rerank_rollouts_cli_exposes_required_controls() -> None:
     assert arguments.rollout_plies == 40
     assert arguments.target_continuation == "stalemate-aware"
     assert arguments.target_top_k == 6
+    assert arguments.rollout_opponent == "synthetic-loser-league"
     assert arguments.seed == 99
     assert arguments.workers == 2
 
@@ -625,6 +650,19 @@ def test_smoke_cli_exposes_selfish_reverse_stockfish_adversary() -> None:
 
     assert arguments.opponent == "selfish-reverse-stockfish"
     assert arguments.opponent_nodes == 32
+
+
+def test_smoke_cli_exposes_reproducible_target_exploration() -> None:
+    arguments = cli.build_parser().parse_args(
+        ["smoke", "--target-exploration", "0.25"]
+    )
+    base = cli.HeuristicAgent()
+
+    target = cli._exploring_target(base, arguments.target_exploration, salt="test")
+
+    assert isinstance(target, cli.ExploringLoserAgent)
+    assert target.base is base
+    assert target.exploration_probability == 0.25
 
 
 def test_smoke_cli_exposes_frozen_target_exploit_adversary() -> None:

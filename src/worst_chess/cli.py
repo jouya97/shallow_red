@@ -32,6 +32,10 @@ from worst_chess.agents.opponent_model import (
 )
 from worst_chess.agents.policy_search import PolicyGuidedReverseSearchAgent
 from worst_chess.agents.portfolio import RegimeSwitchingOpponentAgent
+from worst_chess.agents.proof_hybrid import (
+    ProofGuidedSelfmateAgent,
+    SelfmateProofBook,
+)
 from worst_chess.agents.random import RandomAgent
 from worst_chess.agents.resistant import ResistantOpponentAgent
 from worst_chess.agents.rollout_search import NeuralShortlistRolloutAgent
@@ -39,6 +43,10 @@ from worst_chess.agents.stockfish import (
     LimitedStrengthStockfishAgent,
     ReverseStockfishAgent,
     StockfishAgent,
+)
+from worst_chess.agents.synthetic_loser import (
+    ExploringLoserAgent,
+    build_synthetic_loser_league,
 )
 from worst_chess.agents.tablebase import SyzygyLosingAgent
 from worst_chess.agents.weak import (
@@ -56,6 +64,7 @@ from worst_chess.evaluation.metrics import summarize
 from worst_chess.evaluation.openings import generate_random_openings
 from worst_chess.evaluation.report import write_report
 from worst_chess.evaluation.tournament import TournamentConfig, run_paired_tournament
+from worst_chess.objective.proof_search import ProofSearchConfig
 from worst_chess.training.dataset import (
     generate_labeled_positions,
     read_jsonl,
@@ -65,9 +74,11 @@ from worst_chess.training.dataset import (
 from worst_chess.training.model import (
     ModelConfig,
     PolicyValueNetwork,
+    load_checkpoint,
     save_checkpoint,
 )
 from worst_chess.training.ranked_dataset import (
+    RankedDatasetSplit,
     RankedPosition,
     generate_ranked_trajectories,
     rank_position,
@@ -109,6 +120,7 @@ RANKED_OPPONENT_CHOICES = (
     *OPPONENT_CHOICES,
     "selfish-random-reply",
     "selfish-portfolio",
+    "synthetic-loser-league",
 )
 SMOKE_OPPONENT_CHOICES = (
     *OPPONENT_CHOICES,
@@ -117,6 +129,7 @@ SMOKE_OPPONENT_CHOICES = (
     "selfish-portfolio",
     "selfish-reverse-stockfish",
     "frozen-target-exploit",
+    "synthetic-loser-league",
 )
 
 
@@ -224,9 +237,33 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--checkpoint", type=Path)
     smoke.add_argument("--device", default="cpu")
     smoke.add_argument(
+        "--target-exploration",
+        type=float,
+        default=0.0,
+        help="reproducible safe random-move probability for trajectory discovery",
+    )
+    smoke.add_argument(
         "--tablebase",
         type=Path,
         help="optional local Syzygy directory for exact endgame guidance",
+    )
+    smoke.add_argument(
+        "--proof-report",
+        type=Path,
+        nargs="+",
+        help="proof-search reports used as an exact shortest-selfmate book",
+    )
+    smoke.add_argument(
+        "--selfmate-search-plies",
+        type=int,
+        default=0,
+        help="bounded live forced-selfmate horizon; zero disables live search",
+    )
+    smoke.add_argument(
+        "--selfmate-search-nodes",
+        type=int,
+        default=10_000,
+        help="node budget for each live forced-selfmate search",
     )
     smoke.add_argument("--output", type=Path, default=Path("artifacts/smoke"))
     verify = subparsers.add_parser(
@@ -328,6 +365,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=4,
         help="neural candidates searched by stalemate-aware continuation",
     )
+    rerank.add_argument(
+        "--rollout-opponent",
+        choices=("random", "synthetic-loser-league"),
+        default="random",
+        help="opponent population used for every counterfactual continuation",
+    )
     rerank.add_argument("--seed", type=int, default=20260721)
     rerank.add_argument("--device", default="cpu")
     rerank.add_argument("--workers", type=int, default=1)
@@ -341,6 +384,23 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         required=True,
         help="one or more ranked JSONL datasets",
+    )
+    train_ranked_parser.add_argument(
+        "--validation-dataset",
+        type=Path,
+        nargs="+",
+        help="fixed validation datasets; requires --test-dataset",
+    )
+    train_ranked_parser.add_argument(
+        "--test-dataset",
+        type=Path,
+        nargs="+",
+        help="fixed held-out test datasets; requires --validation-dataset",
+    )
+    train_ranked_parser.add_argument(
+        "--initialize-from",
+        type=Path,
+        help="strictly initialize weights and architecture from a checkpoint",
     )
     train_ranked_parser.add_argument("--checkpoint", type=Path, required=True)
     train_ranked_parser.add_argument("--epochs", type=int, default=10)
@@ -369,7 +429,59 @@ def build_parser() -> argparse.ArgumentParser:
     )
     uci.add_argument("--search-nodes", type=int, default=64)
     uci.add_argument("--search-top-k", type=int, default=8)
+    uci.add_argument(
+        "--proof-report",
+        type=Path,
+        nargs="+",
+        help="proof-search reports used as an exact shortest-selfmate book",
+    )
+    uci.add_argument("--selfmate-search-plies", type=int, default=0)
+    uci.add_argument("--selfmate-search-nodes", type=int, default=10_000)
     return parser
+
+
+def _proof_guided_agent(
+    fallback: Agent,
+    proof_reports: Sequence[Path] | None,
+    *,
+    search_plies: int,
+    search_nodes: int,
+) -> Agent:
+    """Add exact and dynamic proof overrides when either is configured."""
+
+    if search_plies < 0:
+        raise ValueError("--selfmate-search-plies must be nonnegative")
+    if search_nodes < 1:
+        raise ValueError("--selfmate-search-nodes must be positive")
+    if not proof_reports and search_plies == 0:
+        return fallback
+    book = (
+        SelfmateProofBook.from_reports(tuple(proof_reports))
+        if proof_reports
+        else SelfmateProofBook()
+    )
+    search_config = (
+        ProofSearchConfig(max_plies=search_plies, node_budget=search_nodes)
+        if search_plies > 0
+        else None
+    )
+    return ProofGuidedSelfmateAgent(
+        fallback,
+        book=book,
+        search_config=search_config,
+    )
+
+
+def _exploring_target(agent: Agent, probability: float, *, salt: str) -> Agent:
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("--target-exploration must be in [0, 1]")
+    if probability == 0.0:
+        return agent
+    return ExploringLoserAgent(
+        agent,
+        exploration_probability=probability,
+        salt=salt,
+    )
 
 
 def _target_agent(
@@ -590,6 +702,8 @@ def _ranked_opponent_agent(
         )
     if name == "selfish-portfolio":
         return _selfish_population_opponent(target, candidate_limit=24)
+    if name == "synthetic-loser-league":
+        return build_synthetic_loser_league(target)
     return _opponent_agent(name, stockfish, nodes, stack)
 
 
@@ -633,6 +747,17 @@ def _run_smoke(arguments: argparse.Namespace) -> int:
             target = stack.enter_context(
                 SyzygyLosingAgent(arguments.tablebase, target)
             )
+        target = _exploring_target(
+            target,
+            arguments.target_exploration,
+            salt="smoke-target-exploration-v1",
+        )
+        target = _proof_guided_agent(
+            target,
+            arguments.proof_report,
+            search_plies=arguments.selfmate_search_plies,
+            search_nodes=arguments.selfmate_search_nodes,
+        )
         opponent: Agent
         if arguments.opponent == "frozen-target-exploit":
             frozen_target = _target_agent(
@@ -657,6 +782,17 @@ def _run_smoke(arguments: argparse.Namespace) -> int:
                 frozen_target = stack.enter_context(
                     SyzygyLosingAgent(arguments.tablebase, frozen_target)
                 )
+            frozen_target = _exploring_target(
+                frozen_target,
+                arguments.target_exploration,
+                salt="smoke-target-exploration-v1",
+            )
+            frozen_target = _proof_guided_agent(
+                frozen_target,
+                arguments.proof_report,
+                search_plies=arguments.selfmate_search_plies,
+                search_nodes=arguments.selfmate_search_nodes,
+            )
             opponent = FrozenTargetExploitOpponentAgent(
                 frozen_target,
                 candidate_limit=arguments.exploit_candidates,
@@ -670,6 +806,8 @@ def _run_smoke(arguments: argparse.Namespace) -> int:
                 target,
                 candidate_limit=arguments.exploit_candidates,
             )
+        elif arguments.opponent == "synthetic-loser-league":
+            opponent = build_synthetic_loser_league(target)
         elif arguments.opponent in {
             "selfish-loser",
             "selfish-reverse-stockfish",
@@ -718,6 +856,8 @@ def _run_smoke(arguments: argparse.Namespace) -> int:
     print(f"draw rate: {summary.overall.draw_rate:.1%}")
     print(f"target-win rate: {summary.overall.target_win_rate:.1%}")
     print(f"protocol-failure rate: {summary.overall.protocol_failure_rate:.1%}")
+    if isinstance(target, ProofGuidedSelfmateAgent):
+        print(f"proof hybrid: {json.dumps(asdict(target.stats), sort_keys=True)}")
     print(f"report: {report_path}")
     print(f"pgn: {pgn_path}")
     return 0
@@ -898,20 +1038,71 @@ def _run_train_ranked(arguments: argparse.Namespace) -> int:
     )
     source_count = len({position.source_id for position in positions})
     group_matching_suffixes = source_count > 1
-    split = split_ranked_by_trajectory(
-        positions,
-        seed=arguments.seed,
-        group_matching_suffixes=group_matching_suffixes,
+    validation_datasets = tuple(
+        getattr(arguments, "validation_dataset", None) or ()
     )
+    test_datasets = tuple(getattr(arguments, "test_dataset", None) or ())
+    if bool(validation_datasets) != bool(test_datasets):
+        raise ValueError(
+            "--validation-dataset and --test-dataset must be supplied together"
+        )
+    if validation_datasets:
+        split = RankedDatasetSplit(
+            train=positions,
+            validation=tuple(
+                position
+                for dataset in validation_datasets
+                for position in read_ranked_jsonl(dataset)
+            ),
+            test=tuple(
+                position
+                for dataset in test_datasets
+                for position in read_ranked_jsonl(dataset)
+            ),
+        )
+    else:
+        split = split_ranked_by_trajectory(
+            positions,
+            seed=arguments.seed,
+            group_matching_suffixes=group_matching_suffixes,
+        )
     if not split.validation or not split.test:
         raise ValueError("ranked dataset must have validation and test examples")
     torch.manual_seed(arguments.seed)
-    model = PolicyValueNetwork(
-        ModelConfig(
+    initialize_from = getattr(arguments, "initialize_from", None)
+    initialized_metadata: dict[str, object] | None = None
+    if initialize_from is not None:
+        model, initialized_metadata = load_checkpoint(initialize_from, device="cpu")
+        requested_config = ModelConfig(
             channels=arguments.channels,
             residual_blocks=arguments.residual_blocks,
         )
-    )
+        if model.config != requested_config:
+            raise ValueError(
+                "--initialize-from architecture does not match requested "
+                "--channels/--residual-blocks"
+            )
+        requested_orientation = (
+            PERSPECTIVE_ACTION_ORIENTATION
+            if arguments.perspective_actions
+            else ABSOLUTE_ACTION_ORIENTATION
+        )
+        initialized_orientation = initialized_metadata.get(
+            ACTION_ORIENTATION_METADATA_KEY,
+            ABSOLUTE_ACTION_ORIENTATION,
+        )
+        if initialized_orientation != requested_orientation:
+            raise ValueError(
+                "--initialize-from policy action orientation does not match "
+                "the requested training orientation"
+            )
+    else:
+        model = PolicyValueNetwork(
+            ModelConfig(
+                channels=arguments.channels,
+                residual_blocks=arguments.residual_blocks,
+            )
+        )
     evaluation_options = {
         "batch_size": arguments.batch_size,
         "rank_temperature": arguments.rank_temperature,
@@ -941,6 +1132,11 @@ def _run_train_ranked(arguments: argparse.Namespace) -> int:
     )
     metadata = {
         "datasets": [str(dataset) for dataset in datasets],
+        "validation_datasets": [str(dataset) for dataset in validation_datasets],
+        "test_datasets": [str(dataset) for dataset in test_datasets],
+        "initialized_from": (
+            None if initialize_from is None else str(initialize_from)
+        ),
         "group_matching_trajectory_suffixes": group_matching_suffixes,
         ACTION_ORIENTATION_METADATA_KEY: (
             PERSPECTIVE_ACTION_ORIENTATION
@@ -1001,6 +1197,10 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
         max_plies=arguments.rollout_plies,
         seed=arguments.seed,
     )
+    rollout_opponent = getattr(arguments, "rollout_opponent", "random")
+    rollout_opponent_id = (
+        "uniform-random" if rollout_opponent == "random" else rollout_opponent
+    )
     input_digest = _file_sha256(arguments.input)[:12]
     checkpoint_digest = _file_sha256(arguments.checkpoint)[:12]
 
@@ -1019,7 +1219,7 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
         )
         source_id = (
             f"{position.source_id}/rollout-rerank-v1"
-            f"-{continuation_id}-opponent-uniform-random"
+            f"-{continuation_id}-opponent-{rollout_opponent_id}"
             f"-r{config.rollouts}-h{config.max_plies}-seed{config.seed}"
             f"-checkpoint{checkpoint_digest}-input{input_digest}"
         )
@@ -1040,7 +1240,8 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
             arguments.target_continuation,
             arguments.target_top_k,
         )
-        scorer = LexicographicRolloutScorer(target, RandomAgent(), config)
+        opponent = _build_rollout_opponent(rollout_opponent, target)
+        scorer = LexicographicRolloutScorer(target, opponent, config)
         reranked = [_rerank_rollout_task(task, scorer) for task in tasks]
     else:
         with ProcessPoolExecutor(
@@ -1053,6 +1254,7 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
                 config,
                 arguments.target_continuation,
                 arguments.target_top_k,
+                rollout_opponent,
             ),
         ) as executor:
             reranked = list(
@@ -1079,6 +1281,7 @@ def _initialize_rollout_worker(
     config: RolloutConfig,
     target_continuation: str = "neural",
     target_top_k: int = 4,
+    rollout_opponent: str = "random",
 ) -> None:
     global _ROLLOUT_WORKER_SCORER
     target = _build_rollout_target(
@@ -1087,11 +1290,8 @@ def _initialize_rollout_worker(
         target_continuation,
         target_top_k,
     )
-    _ROLLOUT_WORKER_SCORER = LexicographicRolloutScorer(
-        target,
-        RandomAgent(),
-        config,
-    )
+    opponent = _build_rollout_opponent(rollout_opponent, target)
+    _ROLLOUT_WORKER_SCORER = LexicographicRolloutScorer(target, opponent, config)
 
 
 def _build_rollout_target(
@@ -1110,6 +1310,14 @@ def _build_rollout_target(
     if continuation == "stalemate-aware":
         return StalemateAwareRandomReplySearchAgent(policy, top_k=top_k)
     raise ValueError(f"unknown rollout target continuation {continuation!r}")
+
+
+def _build_rollout_opponent(name: str, target: Agent) -> Agent:
+    if name == "random":
+        return RandomAgent()
+    if name == "synthetic-loser-league":
+        return build_synthetic_loser_league(target)
+    raise ValueError(f"unknown rollout opponent {name!r}")
 
 
 def _run_rollout_worker_task(task: _RolloutRerankTask) -> RankedPosition:
@@ -1194,6 +1402,12 @@ def _run_uci(arguments: argparse.Namespace) -> int:
             agent = PolicyGuidedReverseSearchAgent(
                 policy, evaluator, top_k=arguments.search_top_k
             )
+        agent = _proof_guided_agent(
+            agent,
+            arguments.proof_report,
+            search_plies=arguments.selfmate_search_plies,
+            search_nodes=arguments.selfmate_search_nodes,
+        )
         run_uci(agent, sys.stdin, sys.stdout)
     return 0
 

@@ -168,6 +168,31 @@ def expand_report(
                     node_budget=node_budget,
                 ),
             )
+            distance_gain = (
+                result.plies - forced_plies
+                if result.status is ProofStatus.PROVEN and result.plies is not None
+                else None
+            )
+            lower_horizon_status: str | None = None
+            distance_gain_verified = False
+            if distance_gain is not None and distance_gain > 0:
+                lower_result = prove_forced_selfmate_after_move(
+                    ancestor.board,
+                    target_color,
+                    ancestor.forward_moves[0],
+                    ProofSearchConfig(
+                        max_plies=forced_plies,
+                        node_budget=node_budget,
+                    ),
+                )
+                lower_horizon_status = lower_result.status.value
+                distance_gain_verified = lower_result.status is ProofStatus.REFUTED
+
+            previous_generation = seed_record.get("generation")
+            if not isinstance(previous_generation, int):
+                previous_generation = int(
+                    seed_record.get("source") == "quiet-retro-expansion"
+                )
             record = {
                 "fen": ancestor.board.fen(en_passant="fen"),
                 "target_color": seed_record["target_color"],
@@ -178,7 +203,7 @@ def expand_report(
                 "root_source_id": seed_record.get(
                     "root_source_id", seed_record.get("source_id")
                 ),
-                "generation": int(seed_record.get("generation", 0)) + 1,
+                "generation": previous_generation + 1,
                 "parent_fen": seed_record["fen"],
                 "prelude": [move.uci() for move in ancestor.forward_moves],
                 "status": result.status.value,
@@ -189,23 +214,20 @@ def expand_report(
                 "principal_variation": [
                     move.uci() for move in result.principal_variation
                 ],
-                "distance_gain": (
-                    result.plies - forced_plies
-                    if result.status is ProofStatus.PROVEN
-                    and result.plies is not None
-                    else None
-                ),
+                "distance_gain": distance_gain,
+                "lower_horizon_status": lower_horizon_status,
+                "distance_gain_verified": distance_gain_verified,
             }
             seed_records.append(record)
             output_records.append(record)
             if result.status is ProofStatus.PROVEN and result.plies is not None:
-                if result.plies > forced_plies:
+                if distance_gain_verified:
                     extended_for_seed += 1
                 if extended_for_seed >= max_extended_per_seed:
                     break
         counts = Counter(record["status"] for record in seed_records)
         proven_extended = sum(
-            record["status"] == "proven" and record["distance_gain"] > 0
+            record["status"] == "proven" and record["distance_gain_verified"]
             for record in seed_records
         )
         seed_summaries.append(
@@ -242,7 +264,7 @@ def expand_report(
             "searched": len(output_records),
             "proven": counts["proven"],
             "proven_extended": sum(
-                record["status"] == "proven" and record["distance_gain"] > 0
+                record["status"] == "proven" and record["distance_gain_verified"]
                 for record in output_records
             ),
             "refuted": counts["refuted"],
