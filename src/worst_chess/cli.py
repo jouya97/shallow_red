@@ -350,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
     rerank.add_argument("--input", type=Path, required=True)
     rerank.add_argument("--output", type=Path, required=True)
     rerank.add_argument("--checkpoint", type=Path, required=True)
+    rerank.add_argument("--start", type=int, default=0)
     rerank.add_argument("--positions", type=int, default=100)
     rerank.add_argument("--rollouts", type=int, default=8)
     rerank.add_argument("--rollout-plies", type=int, default=160)
@@ -1175,10 +1176,13 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
         raise ValueError("ranked input dataset must not be empty")
     if type(arguments.positions) is not int or arguments.positions <= 0:
         raise ValueError("--positions must be a positive integer")
-    if arguments.positions > len(positions):
+    if type(arguments.start) is not int or arguments.start < 0:
+        raise ValueError("--start must be a nonnegative integer")
+    if arguments.start + arguments.positions > len(positions):
         raise ValueError(
-            f"--positions requests {arguments.positions} records, but input "
-            f"contains only {len(positions)}"
+            f"--start plus --positions requests through record "
+            f"{arguments.start + arguments.positions}, but input contains "
+            f"only {len(positions)}"
         )
     if type(arguments.workers) is not int or arguments.workers <= 0:
         raise ValueError("--workers must be a positive integer")
@@ -1209,7 +1213,7 @@ def _run_rerank_rollouts(arguments: argparse.Namespace) -> int:
         key=lambda item: _rerank_position_key(
             item[1], index=item[0], seed=arguments.seed
         ),
-    )[: arguments.positions]
+    )[arguments.start : arguments.start + arguments.positions]
     tasks: list[_RolloutRerankTask] = []
     for output_index, (input_index, position) in enumerate(ordered):
         continuation_id = (

@@ -50,6 +50,17 @@ builds a diverse anti-repetition opponent league, generates reachable games,
 and discovers two new exact selfmates plus empirical steering moves up to six
 plies earlier. The pipeline is promising, but the current positive yield is too
 small and exploratory wins prevent training or deployment without more work.
+The [prioritized synthetic-ancestry report](reports/SYNTHETIC_ANCESTRY_2026-07-22.md)
+screens earlier moves from the decisive trajectories, confirms steering up to
+ten plies before game end, and pairs the positives with earlier decisions from
+the winning games as explicit safety data. Its scaled follow-up builds 258
+all-legal labels from 73 reachable families, fixes a family-split leakage bug,
+and rejects the resulting low-weight fine-tunes on clean held-out families.
+The [branching selfmate-fuzzer report](reports/SELFMATE_FUZZER_2026-07-22.md)
+expands those positions into variable legal trajectories, scales to 1,536
+independent initial games, and proves 83 reachable positions across 54 loss
+families. It also documents the safe-root correction and rejects two
+reachable-proof fine-tunes that reduced random-opponent loss reliability.
 
 ## Development
 
@@ -99,6 +110,62 @@ uv run worst-chess smoke --target stalemate-aware \
   --opponent synthetic-loser-league --target-exploration 0.20 \
   --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
   --search-top-k 12 --pairs 25 --opening-plies 0 --max-plies 600
+
+# Cheaply screen earlier decisions from synthetic losses and wins, then
+# independently confirm only positions that produced at least one selfmate.
+uv run python scripts/screen_synthetic_ancestry.py \
+  --pgn artifacts/evaluations/synthetic-run/games.pgn \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --tail-target-positions 12 --rollouts 1 --rollout-plies 80 --workers 4 \
+  --output artifacts/evaluations/synthetic-ancestry-screen/report.json
+uv run python scripts/screen_synthetic_ancestry.py \
+  --screen-report artifacts/evaluations/synthetic-ancestry-screen/report.json \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --rollouts 4 --rollout-plies 120 --workers 4 \
+  --output artifacts/evaluations/synthetic-ancestry-confirm/report.json
+
+# Combine confirmed steering positions with final winning moves as safety
+# negatives, then replace the placeholder ranks with all-legal population
+# rollouts before using the data for training.
+uv run python scripts/build_synthetic_ancestry_dataset.py \
+  --screen-report artifacts/evaluations/synthetic-ancestry-screen/report.json \
+  --confirm-report artifacts/evaluations/synthetic-ancestry-confirm/report.json \
+  --output artifacts/datasets/synthetic-ancestry-seeds.jsonl \
+  --manifest artifacts/evaluations/synthetic-ancestry-dataset/manifest.json
+uv run worst-chess rerank-rollouts \
+  --input artifacts/datasets/synthetic-ancestry-seeds.jsonl \
+  --output artifacts/datasets/synthetic-ancestry-ranked.jsonl \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --positions 14 --rollouts 4 --rollout-plies 120 \
+  --target-continuation stalemate-aware --target-top-k 12 \
+  --rollout-opponent synthetic-loser-league --device cpu --workers 4
+uv run python scripts/finalize_synthetic_ancestry_dataset.py \
+  --input artifacts/datasets/synthetic-ancestry-ranked.jsonl \
+  --manifest artifacts/evaluations/synthetic-ancestry-dataset/manifest.json \
+  --rollouts 4 --rollout-plies 120 \
+  --output artifacts/datasets/synthetic-ancestry-final.jsonl \
+  --report artifacts/evaluations/synthetic-ancestry-dataset/finalization.json
+
+# Branch the finalized positions through varied synthetic loser opponents.
+uv run python scripts/fuzz_selfmate_branches.py \
+  --dataset artifacts/datasets/synthetic-ancestry-final.jsonl \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --generations 3 --beam-width 32 --branch-moves 3 \
+  --samples-per-move 2 --segment-plies 12 --workers 4 \
+  --output artifacts/evaluations/selfmate-fuzzer
+
+# Create independent color-balanced midgame families from the initial array,
+# then use the safety-first beam rather than recycling known ancestry.
+uv run python scripts/generate_fuzzer_frontier.py \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --positions 64 --warmup-plies 40 --workers 4 \
+  --output artifacts/evaluations/selfmate-fresh-seeds
+uv run python scripts/fuzz_selfmate_branches.py \
+  --frontier artifacts/evaluations/selfmate-fresh-seeds/frontier.jsonl \
+  --checkpoint artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt \
+  --beam-objective safety-first --generations 3 --beam-width 64 \
+  --branch-moves 3 --samples-per-move 3 --segment-plies 16 --workers 4 \
+  --output artifacts/evaluations/selfmate-fresh-fuzz
 
 # Generate ranked hard-negative states against the same population.
 uv run worst-chess generate-ranked \
