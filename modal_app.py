@@ -112,6 +112,21 @@ proof_ranked_image = ml_image.add_local_file(
     "/root/build_proof_ranked_dataset.py",
     copy=True,
 )
+synthetic_ancestry_image = ml_image.add_local_file(
+    PROJECT_ROOT / "scripts" / "screen_synthetic_ancestry.py",
+    "/root/screen_synthetic_ancestry.py",
+    copy=True,
+)
+selfmate_fuzzer_image = ml_image.add_local_file(
+    PROJECT_ROOT / "scripts" / "fuzz_selfmate_branches.py",
+    "/root/fuzz_selfmate_branches.py",
+    copy=True,
+)
+fresh_frontier_image = ml_image.add_local_file(
+    PROJECT_ROOT / "scripts" / "generate_fuzzer_frontier.py",
+    "/root/generate_fuzzer_frontier.py",
+    copy=True,
+)
 
 
 @app.function(image=base_image, cpu=1.0, memory=512, timeout=300)
@@ -259,6 +274,75 @@ def run_proof_ranked(arguments: list[str]) -> int:
 
     completed = subprocess.run(
         [sys.executable, "/root/build_proof_ranked_dataset.py", *arguments],
+        cwd=ARTIFACTS_MOUNT,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        check=False,
+    )
+    artifacts.commit()
+    if completed.returncode != 0:
+        raise subprocess.CalledProcessError(completed.returncode, completed.args)
+    return completed.returncode
+
+
+@app.function(
+    image=synthetic_ancestry_image,
+    cpu=4.0,
+    memory=8_192,
+    timeout=6 * 60 * 60,
+    volumes={ARTIFACTS_MOUNT: artifacts},
+)
+def run_synthetic_ancestry(arguments: list[str]) -> int:
+    """Screen or confirm synthetic-game ancestry candidates on CPU."""
+
+    completed = subprocess.run(
+        [sys.executable, "/root/screen_synthetic_ancestry.py", *arguments],
+        cwd=ARTIFACTS_MOUNT,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        check=False,
+    )
+    artifacts.commit()
+    if completed.returncode != 0:
+        raise subprocess.CalledProcessError(completed.returncode, completed.args)
+    return completed.returncode
+
+
+@app.function(
+    image=selfmate_fuzzer_image,
+    cpu=4.0,
+    memory=8_192,
+    timeout=6 * 60 * 60,
+    volumes={ARTIFACTS_MOUNT: artifacts},
+)
+def run_selfmate_fuzzer(arguments: list[str]) -> int:
+    """Run branching synthetic selfmate trajectory search on CPU."""
+
+    completed = subprocess.run(
+        [sys.executable, "/root/fuzz_selfmate_branches.py", *arguments],
+        cwd=ARTIFACTS_MOUNT,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        check=False,
+    )
+    artifacts.commit()
+    if completed.returncode != 0:
+        raise subprocess.CalledProcessError(completed.returncode, completed.args)
+    return completed.returncode
+
+
+@app.function(
+    image=fresh_frontier_image,
+    cpu=4.0,
+    memory=8_192,
+    timeout=6 * 60 * 60,
+    volumes={ARTIFACTS_MOUNT: artifacts},
+)
+def run_fresh_frontier(arguments: list[str]) -> int:
+    """Generate independent initial-board frontier positions on CPU."""
+
+    completed = subprocess.run(
+        [sys.executable, "/root/generate_fuzzer_frontier.py", *arguments],
         cwd=ARTIFACTS_MOUNT,
         stdout=sys.stdout,
         stderr=sys.stderr,
@@ -525,8 +609,7 @@ def main(mode: str = "smoke", command: str = "") -> None:
         base_train = "/artifacts/datasets/finetune-splits/base-train.jsonl"
         proof_train = "/artifacts/datasets/finetune-splits/proof-train.jsonl"
         initialization = (
-            "/artifacts/checkpoints/"
-            "ranked-v03-perspective-random-seed-20261021.pt"
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
         )
         commands: list[list[str]] = []
         for proof_weight in (1, 4, 8):
@@ -585,8 +668,7 @@ def main(mode: str = "smoke", command: str = "") -> None:
         base_train = "/artifacts/datasets/finetune-splits/base-train.jsonl"
         proof_train = "/artifacts/datasets/finetune-splits/proof-train.jsonl"
         initialization = (
-            "/artifacts/checkpoints/"
-            "ranked-v03-perspective-random-seed-20261021.pt"
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
         )
         commands = []
         for proof_weight in (4, 8):
@@ -642,10 +724,7 @@ def main(mode: str = "smoke", command: str = "") -> None:
             raise RuntimeError(f"{len(failures)} sharp fine-tune jobs failed")
         return
     if mode == "proof-finetune-safety":
-        checkpoint = (
-            "/artifacts/checkpoints/"
-            "ranked-v06s-proof-w8-seed-20264022.pt"
-        )
+        checkpoint = "/artifacts/checkpoints/ranked-v06s-proof-w8-seed-20264022.pt"
         commands = [
             [
                 "smoke",
@@ -714,8 +793,7 @@ def main(mode: str = "smoke", command: str = "") -> None:
         return
     if mode == "selfish-pilot":
         checkpoint = (
-            "/artifacts/checkpoints/"
-            "ranked-v03-perspective-random-seed-20261021.pt"
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
         )
         population_commands = [
             [
@@ -758,8 +836,7 @@ def main(mode: str = "smoke", command: str = "") -> None:
         return
     if mode == "synthetic-loser-league":
         checkpoint = (
-            "/artifacts/checkpoints/"
-            "ranked-v03-perspective-random-seed-20261021.pt"
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
         )
         total_pairs = 50
         shard_pairs = 5
@@ -804,8 +881,7 @@ def main(mode: str = "smoke", command: str = "") -> None:
         return
     if mode == "synthetic-loser-exploration":
         checkpoint = (
-            "/artifacts/checkpoints/"
-            "ranked-v03-perspective-random-seed-20261021.pt"
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
         )
         commands = [
             [
@@ -849,14 +925,11 @@ def main(mode: str = "smoke", command: str = "") -> None:
         )
         failures = [result for result in results if isinstance(result, Exception)]
         if failures:
-            raise RuntimeError(
-                f"{len(failures)} synthetic exploration jobs failed"
-            )
+            raise RuntimeError(f"{len(failures)} synthetic exploration jobs failed")
         return
     if mode == "synthetic-exploration-sweep":
         checkpoint = (
-            "/artifacts/checkpoints/"
-            "ranked-v03-perspective-random-seed-20261021.pt"
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
         )
         commands = [
             [
@@ -901,14 +974,11 @@ def main(mode: str = "smoke", command: str = "") -> None:
         )
         failures = [result for result in results if isinstance(result, Exception)]
         if failures:
-            raise RuntimeError(
-                f"{len(failures)} synthetic sweep jobs failed"
-            )
+            raise RuntimeError(f"{len(failures)} synthetic sweep jobs failed")
         return
     if mode == "synthetic-exploration-scale":
         checkpoint = (
-            "/artifacts/checkpoints/"
-            "ranked-v03-perspective-random-seed-20261021.pt"
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
         )
         total_pairs = 100
         shard_pairs = 5
@@ -938,10 +1008,7 @@ def main(mode: str = "smoke", command: str = "") -> None:
                 "--seed",
                 str(20266000 + pair_start),
                 "--output",
-                (
-                    "/artifacts/evaluations/"
-                    f"synthetic-scale-shard-{pair_start:03d}"
-                ),
+                (f"/artifacts/evaluations/synthetic-scale-shard-{pair_start:03d}"),
             ]
             for pair_start in range(0, total_pairs, shard_pairs)
         ]
@@ -954,9 +1021,826 @@ def main(mode: str = "smoke", command: str = "") -> None:
         )
         failures = [result for result in results if isinstance(result, Exception)]
         if failures:
-            raise RuntimeError(
-                f"{len(failures)} synthetic scale jobs failed"
+            raise RuntimeError(f"{len(failures)} synthetic scale jobs failed")
+        return
+    if mode == "synthetic-ancestry-screen":
+        checkpoint = (
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        run_synthetic_ancestry.remote(
+            [
+                "--pgn",
+                "/artifacts/evaluations/synthetic-exploration-shard-015/games.pgn",
+                "/artifacts/evaluations/synthetic-scale-shard-000/games.pgn",
+                "/artifacts/evaluations/synthetic-scale-shard-035/games.pgn",
+                "/artifacts/evaluations/synthetic-scale-shard-080/games.pgn",
+                "--checkpoint",
+                checkpoint,
+                "--tail-target-positions",
+                "12",
+                "--rollouts",
+                "1",
+                "--rollout-plies",
+                "80",
+                "--workers",
+                "4",
+                "--output",
+                "/artifacts/evaluations/synthetic-ancestry-screen/report.json",
+            ]
+        )
+        return
+    if mode == "synthetic-ancestry-confirm":
+        checkpoint = (
+            "/artifacts/checkpoints/ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        run_synthetic_ancestry.remote(
+            [
+                "--screen-report",
+                "/artifacts/evaluations/synthetic-ancestry-screen/report.json",
+                "--checkpoint",
+                checkpoint,
+                "--rollouts",
+                "4",
+                "--rollout-plies",
+                "120",
+                "--workers",
+                "4",
+                "--output",
+                "/artifacts/evaluations/synthetic-ancestry-confirm/report.json",
+            ]
+        )
+        return
+    if mode == "fresh-corpus-ancestry-screen":
+        run_synthetic_ancestry.remote(
+            [
+                "--pgn",
+                "/artifacts/datasets/selfmate-fresh-corpus-1536-decisive.pgn",
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--tail-target-positions",
+                "6",
+                "--rollouts",
+                "1",
+                "--rollout-plies",
+                "80",
+                "--workers",
+                "4",
+                "--seed",
+                "20262800",
+                "--output",
+                (
+                    "/artifacts/evaluations/"
+                    "selfmate-fresh-corpus-1536-ancestry-screen/report.json"
+                ),
+            ]
+        )
+        return
+    if mode == "fresh-corpus-ancestry-confirm":
+        run_synthetic_ancestry.remote(
+            [
+                "--screen-report",
+                (
+                    "/artifacts/evaluations/"
+                    "selfmate-fresh-corpus-1536-ancestry-screen/report.json"
+                ),
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--rollouts",
+                "4",
+                "--rollout-plies",
+                "120",
+                "--workers",
+                "4",
+                "--seed",
+                "20263800",
+                "--output",
+                (
+                    "/artifacts/evaluations/"
+                    "selfmate-fresh-corpus-1536-ancestry-confirm/report.json"
+                ),
+            ]
+        )
+        return
+    if mode == "selfmate-fuzzer-pilot":
+        run_selfmate_fuzzer.remote(
+            [
+                "--dataset",
+                "/artifacts/datasets/synthetic-ancestry-final-v2.jsonl",
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--generations",
+                "3",
+                "--beam-width",
+                "32",
+                "--branch-moves",
+                "3",
+                "--samples-per-move",
+                "2",
+                "--segment-plies",
+                "12",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.15",
+                "--workers",
+                "4",
+                "--beam-objective",
+                "pressure",
+                "--seed",
+                "20260725",
+                "--output",
+                "/artifacts/evaluations/selfmate-fuzzer-pilot",
+            ]
+        )
+        return
+    if mode == "selfmate-fuzzer-scale":
+        run_selfmate_fuzzer.remote(
+            [
+                "--frontier",
+                "/artifacts/evaluations/selfmate-fuzzer-pilot/frontier.jsonl",
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--generations",
+                "4",
+                "--beam-width",
+                "64",
+                "--branch-moves",
+                "3",
+                "--samples-per-move",
+                "3",
+                "--segment-plies",
+                "16",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.15",
+                "--workers",
+                "4",
+                "--beam-objective",
+                "pressure",
+                "--seed",
+                "20260726",
+                "--output",
+                "/artifacts/evaluations/selfmate-fuzzer-scale",
+            ]
+        )
+        return
+    if mode == "selfmate-fuzzer-safety":
+        run_selfmate_fuzzer.remote(
+            [
+                "--frontier",
+                "/artifacts/evaluations/selfmate-fuzzer-pilot/frontier.jsonl",
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--generations",
+                "4",
+                "--beam-width",
+                "64",
+                "--branch-moves",
+                "3",
+                "--samples-per-move",
+                "3",
+                "--segment-plies",
+                "16",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.15",
+                "--workers",
+                "4",
+                "--beam-objective",
+                "safety-first",
+                "--seed",
+                "20260726",
+                "--output",
+                "/artifacts/evaluations/selfmate-fuzzer-safety",
+            ]
+        )
+        return
+    if mode == "selfmate-fresh-seeds":
+        run_fresh_frontier.remote(
+            [
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--positions",
+                "64",
+                "--warmup-plies",
+                "40",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.20",
+                "--workers",
+                "4",
+                "--seed",
+                "20260727",
+                "--output",
+                "/artifacts/evaluations/selfmate-fresh-seeds",
+            ]
+        )
+        return
+    if mode == "selfmate-fresh-pilot":
+        run_selfmate_fuzzer.remote(
+            [
+                "--frontier",
+                "/artifacts/evaluations/selfmate-fresh-seeds/frontier.jsonl",
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--generations",
+                "3",
+                "--beam-width",
+                "64",
+                "--branch-moves",
+                "3",
+                "--samples-per-move",
+                "3",
+                "--segment-plies",
+                "16",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.15",
+                "--workers",
+                "4",
+                "--beam-objective",
+                "safety-first",
+                "--seed",
+                "20260728",
+                "--output",
+                "/artifacts/evaluations/selfmate-fresh-pilot",
+            ]
+        )
+        return
+    if mode == "selfmate-fresh-safe-root":
+        run_selfmate_fuzzer.remote(
+            [
+                "--frontier",
+                "/artifacts/evaluations/selfmate-fresh-seeds/frontier.jsonl",
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--generations",
+                "3",
+                "--beam-width",
+                "64",
+                "--branch-moves",
+                "3",
+                "--samples-per-move",
+                "3",
+                "--segment-plies",
+                "16",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.15",
+                "--workers",
+                "4",
+                "--beam-objective",
+                "safety-first",
+                "--seed",
+                "20260728",
+                "--output",
+                "/artifacts/evaluations/selfmate-fresh-safe-root-v2",
+            ]
+        )
+        return
+    if mode == "fresh-proof-finetune":
+        base_train = "/artifacts/datasets/finetune-splits/base-train.jsonl"
+        proof_directory = (
+            "/artifacts/datasets/selfmate-fresh-corpus-1536-proof-splits"
+        )
+        initialization = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        commands = []
+        for proof_weight, temperature, epochs in (
+            (4, 0.25, 5),
+            (12, 0.10, 8),
+        ):
+            proof_train = f"{proof_directory}/train.jsonl"
+            commands.append(
+                [
+                    "train-ranked",
+                    "--dataset",
+                    base_train,
+                    *([proof_train] * proof_weight),
+                    "--validation-dataset",
+                    "/artifacts/datasets/finetune-splits/base-validation.jsonl",
+                    f"{proof_directory}/validation.jsonl",
+                    "--test-dataset",
+                    "/artifacts/datasets/finetune-splits/base-test.jsonl",
+                    f"{proof_directory}/test.jsonl",
+                    "--initialize-from",
+                    initialization,
+                    "--checkpoint",
+                    (
+                        "/artifacts/checkpoints/"
+                        f"ranked-v07-reachable-proof-w{proof_weight}"
+                        "-seed-20264801.pt"
+                    ),
+                    "--epochs",
+                    str(epochs),
+                    "--batch-size",
+                    "128",
+                    "--learning-rate",
+                    "0.0001",
+                    "--rank-temperature",
+                    str(temperature),
+                    "--value-loss-weight",
+                    "0",
+                    "--seed",
+                    "20264801",
+                    "--device",
+                    "cuda",
+                    "--channels",
+                    "32",
+                    "--residual-blocks",
+                    "4",
+                    "--perspective-actions",
+                ]
             )
+        results = list(
+            run_gpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} reachable-proof fine-tunes failed")
+        return
+    if mode == "fresh-proof-safety":
+        commands = []
+        for proof_weight in (4, 12):
+            checkpoint = (
+                "/artifacts/checkpoints/"
+                f"ranked-v07-reachable-proof-w{proof_weight}-seed-20264801.pt"
+            )
+            commands.extend(
+                [
+                    [
+                        "smoke",
+                        "--target",
+                        "stalemate-aware",
+                        "--opponent",
+                        "random",
+                        "--checkpoint",
+                        checkpoint,
+                        "--device",
+                        "cpu",
+                        "--search-top-k",
+                        "12",
+                        "--pairs",
+                        "50",
+                        "--openings",
+                        "50",
+                        "--opening-plies",
+                        "6",
+                        "--max-plies",
+                        "600",
+                        "--seed",
+                        "20261221",
+                        "--output",
+                        (
+                            "/artifacts/evaluations/"
+                            f"reachable-proof-w{proof_weight}-random-100"
+                        ),
+                    ],
+                    [
+                        "smoke",
+                        "--target",
+                        "stalemate-aware",
+                        "--opponent",
+                        "synthetic-loser-league",
+                        "--checkpoint",
+                        checkpoint,
+                        "--device",
+                        "cpu",
+                        "--search-top-k",
+                        "12",
+                        "--pairs",
+                        "20",
+                        "--openings",
+                        "1",
+                        "--opening-plies",
+                        "0",
+                        "--max-plies",
+                        "600",
+                        "--seed",
+                        "20265801",
+                        "--output",
+                        (
+                            "/artifacts/evaluations/"
+                            f"reachable-proof-w{proof_weight}-synthetic-40"
+                        ),
+                    ],
+                ]
+            )
+        results = list(
+            run_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} reachable-proof safety jobs failed")
+        return
+    if mode == "fresh-corpus-ancestry-rerank":
+        # The final two-position shard (start 256) was completed during the
+        # initial timing pass. Keep it and fan the remaining work out more
+        # finely to reduce wall time without changing rollout semantics.
+        total_positions = 256
+        shard_size = 4
+        commands = [
+            [
+                "rerank-rollouts",
+                "--input",
+                (
+                    "/artifacts/datasets/"
+                    "selfmate-fresh-corpus-1536-ancestry-seeds.jsonl"
+                ),
+                "--output",
+                (
+                    "/artifacts/datasets/"
+                    f"selfmate-fresh-corpus-1536-ancestry-reranked-{start:03d}.jsonl"
+                ),
+                "--checkpoint",
+                (
+                    "/artifacts/checkpoints/"
+                    "ranked-v03-perspective-random-seed-20261021.pt"
+                ),
+                "--start",
+                str(start),
+                "--positions",
+                str(min(shard_size, total_positions - start)),
+                "--rollouts",
+                "4",
+                "--rollout-plies",
+                "120",
+                "--target-continuation",
+                "stalemate-aware",
+                "--target-top-k",
+                "12",
+                "--rollout-opponent",
+                "synthetic-loser-league",
+                "--seed",
+                "20264802",
+                "--device",
+                "cpu",
+                "--workers",
+                "4",
+            ]
+            for start in range(0, total_positions, shard_size)
+        ]
+        results = list(
+            run_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} ancestry rerank shards failed")
+        return
+    if mode == "fresh-ancestry-finetune":
+        base_train = "/artifacts/datasets/finetune-splits/base-train.jsonl"
+        ancestry_directory = (
+            "/artifacts/datasets/selfmate-fresh-corpus-1536-ancestry-splits"
+        )
+        initialization = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        commands = []
+        for ancestry_weight in (1, 2):
+            ancestry_train = f"{ancestry_directory}/train.jsonl"
+            commands.append(
+                [
+                    "train-ranked",
+                    "--dataset",
+                    base_train,
+                    *([ancestry_train] * ancestry_weight),
+                    "--validation-dataset",
+                    "/artifacts/datasets/finetune-splits/base-validation.jsonl",
+                    f"{ancestry_directory}/validation.jsonl",
+                    "--test-dataset",
+                    "/artifacts/datasets/finetune-splits/base-test.jsonl",
+                    f"{ancestry_directory}/test.jsonl",
+                    "--initialize-from",
+                    initialization,
+                    "--checkpoint",
+                    (
+                        "/artifacts/checkpoints/"
+                        f"ranked-v08-ancestry-w{ancestry_weight}-seed-20264804.pt"
+                    ),
+                    "--epochs",
+                    "3",
+                    "--batch-size",
+                    "128",
+                    "--learning-rate",
+                    "0.00005",
+                    "--rank-temperature",
+                    "0.5",
+                    "--value-loss-weight",
+                    "0",
+                    "--seed",
+                    "20264804",
+                    "--device",
+                    "cuda",
+                    "--channels",
+                    "32",
+                    "--residual-blocks",
+                    "4",
+                    "--perspective-actions",
+                ]
+            )
+        results = list(
+            run_gpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} ancestry fine-tunes failed")
+        return
+    if mode == "fresh-ancestry-safe-all-finetune":
+        base_train = "/artifacts/datasets/finetune-splits/base-train.jsonl"
+        ancestry_directory = (
+            "/artifacts/datasets/"
+            "selfmate-fresh-corpus-1536-ancestry-safe-all-family-splits"
+        )
+        initialization = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        commands = []
+        for ancestry_weight in (1, 2):
+            ancestry_train = f"{ancestry_directory}/train.jsonl"
+            commands.append(
+                [
+                    "train-ranked",
+                    "--dataset",
+                    base_train,
+                    *([ancestry_train] * ancestry_weight),
+                    "--validation-dataset",
+                    "/artifacts/datasets/finetune-splits/base-validation.jsonl",
+                    f"{ancestry_directory}/validation.jsonl",
+                    "--test-dataset",
+                    "/artifacts/datasets/finetune-splits/base-test.jsonl",
+                    f"{ancestry_directory}/test.jsonl",
+                    "--initialize-from",
+                    initialization,
+                    "--checkpoint",
+                    (
+                        "/artifacts/checkpoints/"
+                        f"ranked-v09-safe-ancestry-w{ancestry_weight}"
+                        "-seed-20264806.pt"
+                    ),
+                    "--epochs",
+                    "3",
+                    "--batch-size",
+                    "128",
+                    "--learning-rate",
+                    "0.00005",
+                    "--rank-temperature",
+                    "0.5",
+                    "--value-loss-weight",
+                    "0",
+                    "--seed",
+                    "20264806",
+                    "--device",
+                    "cuda",
+                    "--channels",
+                    "32",
+                    "--residual-blocks",
+                    "4",
+                    "--perspective-actions",
+                ]
+            )
+        results = list(
+            run_gpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} safe-ancestry fine-tunes failed")
+        return
+    if mode == "fresh-ancestry-safety":
+        commands = []
+        for ancestry_weight in (1, 2):
+            checkpoint = (
+                "/artifacts/checkpoints/"
+                f"ranked-v08-ancestry-w{ancestry_weight}-seed-20264804.pt"
+            )
+            commands.extend(
+                [
+                    [
+                        "smoke",
+                        "--target",
+                        "stalemate-aware",
+                        "--opponent",
+                        "random",
+                        "--checkpoint",
+                        checkpoint,
+                        "--device",
+                        "cpu",
+                        "--search-top-k",
+                        "12",
+                        "--pairs",
+                        "50",
+                        "--openings",
+                        "50",
+                        "--opening-plies",
+                        "6",
+                        "--max-plies",
+                        "600",
+                        "--seed",
+                        "20261221",
+                        "--output",
+                        (
+                            "/artifacts/evaluations/"
+                            f"ancestry-v08-w{ancestry_weight}-random-100"
+                        ),
+                    ],
+                    [
+                        "smoke",
+                        "--target",
+                        "stalemate-aware",
+                        "--opponent",
+                        "synthetic-loser-league",
+                        "--checkpoint",
+                        checkpoint,
+                        "--device",
+                        "cpu",
+                        "--search-top-k",
+                        "12",
+                        "--pairs",
+                        "10",
+                        "--openings",
+                        "1",
+                        "--opening-plies",
+                        "0",
+                        "--max-plies",
+                        "600",
+                        "--seed",
+                        "20265805",
+                        "--output",
+                        (
+                            "/artifacts/evaluations/"
+                            f"ancestry-v08-w{ancestry_weight}-synthetic-20"
+                        ),
+                    ],
+                ]
+            )
+        results = list(
+            run_cpu.map(
+                commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} ancestry safety jobs failed")
+        return
+    if mode in {
+        "selfmate-fresh-corpus-a",
+        "selfmate-fresh-corpus-b",
+        "selfmate-fresh-corpus-c",
+    }:
+        first_start = {
+            "selfmate-fresh-corpus-a": 0,
+            "selfmate-fresh-corpus-b": 512,
+            "selfmate-fresh-corpus-c": 1024,
+        }[mode]
+        shard_starts = range(first_start, first_start + 512, 64)
+        checkpoint = (
+            "/artifacts/checkpoints/"
+            "ranked-v03-perspective-random-seed-20261021.pt"
+        )
+        seed_commands = [
+            [
+                "--checkpoint",
+                checkpoint,
+                "--positions",
+                "64",
+                "--start-index",
+                str(start),
+                "--warmup-plies",
+                "40",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.20",
+                "--workers",
+                "4",
+                "--seed",
+                str(20260800 + start),
+                "--output",
+                (
+                    "/artifacts/evaluations/"
+                    f"selfmate-fresh-corpus-seeds-{start:04d}"
+                ),
+            ]
+            for start in shard_starts
+        ]
+        seed_results = list(
+            run_fresh_frontier.map(
+                seed_commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        seed_failures = [
+            result for result in seed_results if isinstance(result, Exception)
+        ]
+        if seed_failures:
+            raise RuntimeError(
+                f"{len(seed_failures)} fresh-frontier corpus shards failed"
+            )
+
+        fuzz_commands = [
+            [
+                "--frontier",
+                (
+                    "/artifacts/evaluations/"
+                    f"selfmate-fresh-corpus-seeds-{start:04d}/frontier.jsonl"
+                ),
+                "--checkpoint",
+                checkpoint,
+                "--generations",
+                "3",
+                "--beam-width",
+                "64",
+                "--branch-moves",
+                "3",
+                "--samples-per-move",
+                "3",
+                "--segment-plies",
+                "16",
+                "--target-top-k",
+                "12",
+                "--target-exploration",
+                "0.15",
+                "--workers",
+                "4",
+                "--beam-objective",
+                "safety-first",
+                "--seed",
+                str(20261800 + start),
+                "--output",
+                (
+                    "/artifacts/evaluations/"
+                    f"selfmate-fresh-corpus-fuzz-{start:04d}"
+                ),
+            ]
+            for start in shard_starts
+        ]
+        fuzz_results = list(
+            run_selfmate_fuzzer.map(
+                fuzz_commands,
+                order_outputs=False,
+                return_exceptions=True,
+            )
+        )
+        fuzz_failures = [
+            result for result in fuzz_results if isinstance(result, Exception)
+        ]
+        if fuzz_failures:
+            raise RuntimeError(f"{len(fuzz_failures)} fresh-fuzzer shards failed")
         return
     if mode == "highmem":
         run_highmem.remote(arguments)
@@ -975,6 +1859,16 @@ def main(mode: str = "smoke", command: str = "") -> None:
         "proof-candidates, retro-ancestors, retro-ancestors-v2, proof-ranked, "
         "proof-finetune, proof-finetune-sharp, proof-finetune-safety, "
         "selfish-pilot, synthetic-loser-league, synthetic-loser-exploration, "
-        "synthetic-exploration-sweep, synthetic-exploration-scale, highmem, "
-        "retrograde, four-piece-retrograde, gpu"
+        "synthetic-exploration-sweep, synthetic-exploration-scale, "
+        "synthetic-ancestry-screen, synthetic-ancestry-confirm, "
+        "fresh-corpus-ancestry-screen, fresh-corpus-ancestry-confirm, highmem, "
+        "selfmate-fuzzer-pilot, selfmate-fuzzer-scale, "
+        "selfmate-fuzzer-safety, selfmate-fresh-seeds, "
+        "selfmate-fresh-pilot, selfmate-fresh-safe-root, "
+        "fresh-proof-finetune, fresh-proof-safety, "
+        "fresh-corpus-ancestry-rerank, fresh-ancestry-finetune, "
+        "fresh-ancestry-safe-all-finetune, fresh-ancestry-safety, "
+        "selfmate-fresh-corpus-a, selfmate-fresh-corpus-b, "
+        "selfmate-fresh-corpus-c, retrograde, "
+        "four-piece-retrograde, gpu"
     )

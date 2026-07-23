@@ -77,8 +77,11 @@ def label_proof_position(
     if not counts["proven"]:
         raise ValueError("input claim was not reproduced by all-move labeling")
 
-    root_id = record.get("root_source_id", record.get("source_id", "unknown"))
-    trajectory_id = f"yacpdb-{root_id}"
+    root_id = record.get(
+        "root_source_id",
+        record.get("source_id", record.get("game_id", "unknown")),
+    )
+    trajectory_id = f"selfmate-proof-{root_id}"
     positions = [
         _ranked_position(
             board,

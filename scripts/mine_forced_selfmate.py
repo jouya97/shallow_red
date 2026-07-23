@@ -74,6 +74,8 @@ def extract_candidates(
                 if not observed_target_loss and not include_non_losses:
                     continue
                 selected = target_positions[-tail_target_positions:]
+                game_id = game.headers.get("Round", "unknown")
+                root_source_id = game_id.split("/", maxsplit=1)[0]
                 for fen, ply in selected:
                     key = (fen, target_color)
                     if key in seen:
@@ -84,7 +86,8 @@ def extract_candidates(
                             "fen": fen,
                             "target_color": "white" if target_color else "black",
                             "source": path.name,
-                            "game_id": game.headers.get("Round", "unknown"),
+                            "game_id": game_id,
+                            "root_source_id": root_source_id,
                             "ply": ply,
                             "observed_target_loss": observed_target_loss,
                             "plies_before_game_end": board.ply() - ply,
@@ -142,11 +145,25 @@ def search_candidates(
             final_status = result.status
             if result.status in {ProofStatus.PROVEN, ProofStatus.UNKNOWN}:
                 break
+        proven_attempt = next(
+            (attempt for attempt in attempts if attempt["status"] == "proven"),
+            None,
+        )
         records.append(
             {
                 "index": start + offset,
                 **candidate,
                 "status": final_status.value,
+                "forced_plies": (
+                    proven_attempt["forced_plies"]
+                    if proven_attempt is not None
+                    else None
+                ),
+                "principal_variation": (
+                    proven_attempt["principal_variation"]
+                    if proven_attempt is not None
+                    else []
+                ),
                 "attempts": attempts,
             }
         )

@@ -127,6 +127,8 @@ def test_rerank_rollouts_cli_exposes_required_controls() -> None:
             "output.jsonl",
             "--checkpoint",
             "model.pt",
+            "--start",
+            "3",
             "--positions",
             "7",
             "--rollouts",
@@ -148,6 +150,7 @@ def test_rerank_rollouts_cli_exposes_required_controls() -> None:
         ]
     )
 
+    assert arguments.start == 3
     assert arguments.positions == 7
     assert arguments.rollouts == 3
     assert arguments.rollout_plies == 40
@@ -253,6 +256,8 @@ def test_rerank_rollouts_is_deterministic_and_preserves_lineage(
                     str(output),
                     "--checkpoint",
                     str(checkpoint),
+                    "--start",
+                    "1",
                     "--positions",
                     "2",
                     "--rollouts",
@@ -278,7 +283,7 @@ def test_rerank_rollouts_is_deterministic_and_preserves_lineage(
         key=lambda item: cli._rerank_position_key(
             item[1], index=item[0], seed=41
         ),
-    )[:2]
+    )[1:3]
     expected_by_trajectory = {
         position.trajectory_id: position for _, position in expected
     }
@@ -316,6 +321,7 @@ def test_rerank_rollouts_rejects_destructive_or_oversized_requests(
         input=input_path,
         output=input_path,
         checkpoint=checkpoint,
+        start=0,
         positions=1,
         rollouts=1,
         rollout_plies=1,

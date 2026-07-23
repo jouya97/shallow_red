@@ -74,6 +74,7 @@ def test_extract_candidates_keeps_only_tail_positions_from_target_losses(
     assert candidates[0]["fen"] == SELF_MATE_IN_ONE
     assert candidates[0]["plies_before_observed_mate"] == 2
     assert candidates[0]["observed_target_loss"] is True
+    assert candidates[0]["root_source_id"] == "reachable-s1"
 
 
 def test_extract_candidates_can_include_reachable_non_losses(tmp_path: Path) -> None:
