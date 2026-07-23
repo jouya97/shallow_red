@@ -51,16 +51,30 @@ export function chooseLosingMove(
   game: Chess,
   targetColor: Color = game.turn(),
 ): EngineDecision {
+  return chooseLosingMoveFromCandidates(
+    game,
+    game.moves({ verbose: true }),
+    targetColor,
+  );
+}
+
+export function chooseLosingMoveFromCandidates(
+  game: Chess,
+  candidateMoves: readonly Move[],
+  targetColor: Color = game.turn(),
+): EngineDecision {
   if (game.turn() !== targetColor) {
     throw new Error("Shallow Red can only move for its designated color");
   }
   if (game.isGameOver()) {
     throw new Error("Shallow Red cannot move from a finished game");
   }
+  if (candidateMoves.length === 0) {
+    throw new Error("Shallow Red requires at least one candidate move");
+  }
 
   const started = performance.now();
-  const candidates = game
-    .moves({ verbose: true })
+  const candidates = candidateMoves
     .slice()
     .sort((left, right) => left.lan.localeCompare(right.lan));
   let selected = candidates[0];
@@ -220,4 +234,3 @@ function moveDescriptor(move: Move): LosingMove {
 function opposite(color: Color): Color {
   return color === "w" ? "b" : "w";
 }
-

@@ -5,6 +5,8 @@ import { Chess, type Square } from "chess.js";
 import { opposite, type Side } from "../lib/game-result";
 import { rewardClaimMailto } from "../lib/reward-claim";
 import { chooseLosingMove } from "../lib/shallow-red";
+import { chooseTinyPolicyMove } from "../lib/tiny-engine";
+import { decodeTinyPolicy, type TinyPolicy } from "../lib/tiny-policy";
 
 const FILES = ["a", "b", "c", "d", "e", "f", "g", "h"] as const;
 const RANKS = [8, 7, 6, 5, 4, 3, 2, 1] as const;
@@ -24,6 +26,7 @@ const PIECES = {
 } as const;
 
 type Outcome = "loss" | "win" | "draw";
+type ModelStatus = "loading" | "ready" | "fallback";
 type GlobalStats = {
   losses: number;
   wins: number;
@@ -36,14 +39,38 @@ export function ShallowRedGame() {
   const recordedOutcome = useRef<Outcome | null>(null);
   const gameId = useRef<string | null>(null);
   const engineTimer = useRef<number | null>(null);
+  const tinyPolicy = useRef<TinyPolicy | null>(null);
   const [, setFen] = useState(() => game.fen());
   const [humanColor, setHumanColor] = useState<Side>("w");
   const [selected, setSelected] = useState<Square | null>(null);
   const [thinking, setThinking] = useState(false);
+  const [modelStatus, setModelStatus] = useState<ModelStatus>("loading");
   const [stats, setStats] = useState<GlobalStats | null>(null);
 
   useEffect(() => () => {
     if (engineTimer.current !== null) window.clearTimeout(engineTimer.current);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadTinyPolicy() {
+      try {
+        const response = await fetch("/tiny-policy-v1.bin");
+        if (!response.ok) throw new Error("Tiny policy could not be loaded.");
+        const policy = decodeTinyPolicy(await response.arrayBuffer());
+        if (!active) return;
+        tinyPolicy.current = policy;
+        setModelStatus("ready");
+      } catch {
+        if (active) setModelStatus("fallback");
+      }
+    }
+
+    void loadTinyPolicy();
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -118,7 +145,20 @@ export function ShallowRedGame() {
         engineTimer.current = null;
         return;
       }
-      const nextDecision = chooseLosingMove(activeGame, activeEngineColor);
+      let nextDecision;
+      try {
+        nextDecision = tinyPolicy.current
+          ? chooseTinyPolicyMove(
+              activeGame,
+              tinyPolicy.current,
+              activeEngineColor,
+            )
+          : chooseLosingMove(activeGame, activeEngineColor);
+      } catch {
+        tinyPolicy.current = null;
+        setModelStatus("fallback");
+        nextDecision = chooseLosingMove(activeGame, activeEngineColor);
+      }
       activeGame.move(nextDecision.move);
       setFen(activeGame.fen());
       setThinking(false);
@@ -290,6 +330,13 @@ export function ShallowRedGame() {
           <p className="eyebrow">Your assignment</p>
           <p className="big-rule">Play {colorName(humanColor)}. Try to lose.</p>
           <p>Shallow Red plays {colorName(engineColor)} and wants you to checkmate it. Normal chess rules apply.</p>
+          <p className={`model-mode ${modelStatus}`} aria-live="polite">
+            {modelStatus === "ready"
+              ? "Tiny neural model active · 24×3 int8 policy"
+              : modelStatus === "loading"
+                ? "Loading tiny neural model…"
+                : "Neural model unavailable · safe heuristic active"}
+          </p>
         </div>
 
         <div className="move-log">

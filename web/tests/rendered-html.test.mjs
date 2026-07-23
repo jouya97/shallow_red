@@ -37,6 +37,7 @@ test("server-renders the Shallow Red game shell", async () => {
   assert.match(html, />Wins</);
   assert.match(html, />Draws</);
   assert.match(html, />Total games</);
+  assert.match(html, /Loading tiny neural model/);
   assert.doesNotMatch(html, /Shallow Red losses|Shallow Red wins/i);
   assert.doesNotMatch(html, /Accidental AI wins|Last search|research evaluations|How this scales|server bill|moves computed locally/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/);
@@ -51,6 +52,8 @@ test("server-renders the technical page and model credit", async () => {
   assert.match(html, /By <strong>Jian Ouyang<\/strong>/);
   assert.match(html, /What does .*losing.* mean/);
   assert.match(html, /281 of 300/);
+  assert.match(html, /39\.7 KB/);
+  assert.match(html, /shortlists twelve legal moves/);
   assert.match(html, /gpt-5\.6-sol-high/);
   assert.match(html, /Back to the game/);
 });

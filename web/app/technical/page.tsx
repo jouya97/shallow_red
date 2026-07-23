@@ -76,14 +76,16 @@ export default function TechnicalPage() {
           <div>
             <h2>What runs on this website</h2>
             <p>
-              The web version is a compact distillation of the research engine,
-              not the complete neural model.
+              The web version uses a smaller 24-channel, three-block neural
+              policy. Its quantized model is only 39.7 KB, so it can load and
+              run directly in your browser without a GPU.
             </p>
             <p>
-              On every turn, it examines every legal move and every legal
-              immediate reply. It looks for positions where the opponent can
-              checkmate it, take its pieces, attack the area around its king, or
-              restrict its movement.
+              On every turn, the neural policy shortlists twelve legal moves.
+              The existing tactical scorer then examines every legal immediate
+              reply to those moves. It looks for positions where the opponent
+              can checkmate it, take its pieces, attack the area around its king,
+              or restrict its movement.
             </p>
             <p>It also avoids:</p>
             <ul>
@@ -94,7 +96,9 @@ export default function TechnicalPage() {
             </ul>
             <p>
               All of this runs inside your browser. Playing against Shallow Red
-              does not require a GPU or a permanent chess server.
+              does not require a GPU or a permanent chess server. If the model
+              cannot load, the original all-moves heuristic remains available
+              as a safe fallback.
             </p>
           </div>
         </section>

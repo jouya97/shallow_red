@@ -102,6 +102,12 @@ The exporter is deterministic and keeps the unused value head out of the
 artifact. The browser decoder validates its version, tensor metadata, payload
 size, architecture, action layout, and orientation before inference.
 
+The site integration uses the neural policy only to shortlist twelve legal
+moves. The existing tactical reply scorer chooses among those moves, preserving
+its immediate checkmate, draw, and stalemate safeguards. A load or inference
+failure automatically falls back to the original all-moves heuristic, and the
+game panel reports which mode is active.
+
 ## Gameplay
 
 The target was the neural top-12 shortlist followed by the frozen
@@ -134,13 +140,12 @@ The 24×2 model improved to 93%, but remained slower and less reliable than
 
 Continue with, but do not yet promote, the 24×3 policy:
 
-1. Use the network only to shortlist moves; retain the current deterministic
-   web heuristic as the final scorer and fallback.
-2. Run the exact quantized browser hybrid through fresh gameplay suites.
-3. Benchmark the complete browser path on desktop and mobile-class CPUs.
-4. Train at least two additional 24×3 seeds and run a fresh gameplay suite
+1. Run the exact quantized browser hybrid through fresh gameplay suites.
+2. Benchmark the complete browser path on desktop and mobile-class CPUs.
+3. Train at least two additional 24×3 seeds and run a fresh gameplay suite
    before promotion, because the architecture comparison currently uses one
    seed.
 
-The prototype adds an inert model artifact and inference library; production
-game behavior is unchanged.
+The branch now includes the model-backed hybrid and its safe fallback. The
+historical gameplay table above still measures the equivalent Python hybrid;
+fresh evaluation of the exact TypeScript path remains required.
