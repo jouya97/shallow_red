@@ -2,10 +2,11 @@
 
 ## Decision
 
-A 24-channel, three-residual-block policy is small enough to prototype in the
+A 24-channel, three-residual-block policy is small enough to run in the
 browser and close enough to the selected 32-channel, four-block policy to
-justify integration work. It is **not promoted yet**: the exact browser
-inference path and hybrid must pass parity and fresh gameplay tests first.
+justify integration work. It is **not promoted yet**: the dependency-free
+TypeScript inference path now passes parity, but the hybrid still needs
+fresh browser gameplay and mobile-device latency tests.
 
 The candidate's deployable policy has 37,633 parameters. Per-tensor int8
 quantization produces a 37.7 KB raw payload, or 32.6 KB with zlib compression.
@@ -74,8 +75,32 @@ scale, then dequantized for the existing inference harness:
 | Quantized test MRR | 0.474 |
 
 Post-training quantization did not degrade held-out ranking metrics. Gameplay
-below used the float checkpoint; the quantized browser implementation still
-needs end-to-end parity tests.
+below used the float checkpoint.
+
+## Browser prototype
+
+The branch includes a versioned policy-only artifact and dependency-free
+TypeScript inference implementation:
+
+- `web/public/tiny-policy-v1.bin`: 39,700 bytes, including a 37,633-byte int8
+  tensor payload and self-describing JSON header
+- SHA-256:
+  `2a44f37b163b1d3b2f1f6ad42d1f7e176ac088b6d135370584eafdb610e629fa`
+- eight deterministic Python fixtures covering both colors, castling,
+  en passant, repetition, low material, and white/black promotions
+- exact observation and legal-action-coordinate parity on all fixtures
+- exact legal top-12 ordering on all fixtures
+- maximum TypeScript-versus-quantized-PyTorch logit error:
+  `0.0000038147`
+
+The dependency-free TypeScript forward pass measured 6.24 ms p50 and 6.47 ms
+p95 over 200 warm runs in Node on the development Mac. This measures the
+portable scalar implementation, not PyTorch, and is a useful conservative
+desktop baseline rather than a mobile-browser claim.
+
+The exporter is deterministic and keeps the unused value head out of the
+artifact. The browser decoder validates its version, tensor metadata, payload
+size, architecture, action layout, and orientation before inference.
 
 ## Gameplay
 
@@ -107,17 +132,15 @@ The 24×2 model improved to 93%, but remained slower and less reliable than
 
 ## Recommended next step
 
-Prototype, but do not promote, the 24×3 policy:
+Continue with, but do not yet promote, the 24×3 policy:
 
-1. Export only stem, residual-tower, and policy-head tensors with versioned
-   shape metadata and per-tensor int8 scales.
-2. Implement dependency-free TypeScript inference and compare logits, legal
-   rankings, and top-12 sets against PyTorch fixtures.
-3. Use the network only to shortlist moves; retain the current deterministic
+1. Use the network only to shortlist moves; retain the current deterministic
    web heuristic as the final scorer and fallback.
-4. Benchmark the complete browser path on desktop and mobile-class CPUs.
-5. Train at least two additional 24×3 seeds and run a fresh gameplay suite
+2. Run the exact quantized browser hybrid through fresh gameplay suites.
+3. Benchmark the complete browser path on desktop and mobile-class CPUs.
+4. Train at least two additional 24×3 seeds and run a fresh gameplay suite
    before promotion, because the architecture comparison currently uses one
    seed.
 
-No web runtime code or production behavior changed during this investigation.
+The prototype adds an inert model artifact and inference library; production
+game behavior is unchanged.
